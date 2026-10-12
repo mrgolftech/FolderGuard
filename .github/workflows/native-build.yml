@@ -27,6 +27,7 @@ jobs:
         run: ctest --test-dir build -C Release --verbose
       - name: Exercise GUI controls on disposable directory
         if: matrix.platform == 'x64'
+        timeout-minutes: 3
         shell: pwsh
         run: ./tests/GuiInteraction.ps1
       - name: Capture real GUI screenshot (best effort)
