@@ -7,10 +7,10 @@ A lightweight, no-WebView, no-.NET desktop utility for protecting **user-created
 - C++17 + classic Win32 message loop; `ID2D1HwndRenderTarget` and `IDWriteFactory` (Windows 7 baseline).
 - x86/x64 builds using Visual Studio **2022** with `WINVER=0x0601`, `_WIN32_WINNT=0x0601`; do not migrate to VS2026 until Win7 support is removed.
 - MSVC static CRT `/MT`; application runs from a portable `.exe`, no third-party UI assets, no service, no network, no Qt or .NET.
-- UAC `requireAdministrator` application manifest. This is intentionally simple for first delivery; future revisions can elevate only specific operations.
+- UAC `requireAdministrator` application manifest. GUI launch requires an administrator approval each time; while ACL reading can be unprivileged, this first delivery intentionally keeps the process elevated to simplify modifications.
 - Dedicated worker thread for ACL operations, completion via `PostMessageW`; indeterminate bar, elapsed milliseconds, no UI thread blocking.
 - Distinct operation confirmation for destructive full ACL changes; no file delete or move buttons.
-- Readable, dark high-contrast design with rounded surfaces, concise state labels and native path selection.
+- Readable, light high-contrast design with rounded surfaces, concise state labels and native path selection.
 - Logical 1180x820 viewport scales to client area (Windows 7-compatible DPI API). First version uses non-uniform scaling and should be visually tested across common screen sizes.
 
 ## Security architecture
@@ -47,3 +47,4 @@ A lightweight, no-WebView, no-.NET desktop utility for protecting **user-created
 2. Per-action elevation and accessible native UI automation peers.
 3. Native automated integration tests in NTFS test volume, GUI screenshot regression.
 4. Cancellation and granular progress for very large recursive operations.
+5. GUI smoke test uses actual window messages and checks real NTFS attribute changes; Windows 7/10 VM acceptance remains outstanding.
