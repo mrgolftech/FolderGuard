@@ -53,3 +53,8 @@ jobs:
           name: FolderGuard-v0.0.1-${{ matrix.platform }}
           path: build/Release/FolderGuard.exe
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FolderGuard-v0.0.1-${{ matrix.platform }}-NTFS-Validation
+          path: build/Release/FolderGuardSmoke.exe
+          if-no-files-found: error
