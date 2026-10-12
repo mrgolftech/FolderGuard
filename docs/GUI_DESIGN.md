@@ -15,7 +15,7 @@ A lightweight, no-WebView, no-.NET desktop utility for protecting **user-created
 
 ## Independent GUI controls (v0.0.1)
 
-- ACL: toggle DACL inheritance/protection using SetNamedSecurityInfoW and current DACL; do not call icacls /reset or automatically change deletion denial or +S.
+- ACL: enforce meaningful root access restriction by replacing the top-level DACL with Administrators/SYSTEM full control and disabling inheritance; it does not automatically set a delete-deny ACE or +S. Unlock re-enables inheritance and resets top-level DACL; pre-existing custom ACEs are lost (backup required).
 - Delete prevention: add/remove one explicit, non-inherited Authenticated Users DENY(DELETE | FILE_DELETE_CHILD) ACE, preserving other ACEs; do not change ACL inheritance. Removing a broader preexisting denial is deliberately refused.
 - System and Hidden: independently modify FILE_ATTRIBUTE_SYSTEM and FILE_ATTRIBUTE_HIDDEN with SetFileAttributesW.
 - Legacy script and QuickLock/QuickUnlock actions retain their historical semantics; GUI uses only independent actions.
