@@ -38,6 +38,31 @@ bool TargetAclDeniesDelete(const std::wstring& path) {
     LocalFree(descriptor);
     return blocked;
 }
+bool RootAclOnlyAdminSystem(const std::wstring& path) {
+    PSECURITY_DESCRIPTOR sd=nullptr;PACL dacl=nullptr;
+    if(GetNamedSecurityInfoW(const_cast<LPWSTR>(path.c_str()),SE_FILE_OBJECT,
+         DACL_SECURITY_INFORMATION,nullptr,nullptr,&dacl,nullptr,&sd)!=ERROR_SUCCESS)return false;
+    BYTE admins[SECURITY_MAX_SID_SIZE]{},system[SECURITY_MAX_SID_SIZE]{};
+    DWORD n1=sizeof(admins),n2=sizeof(system);
+    bool valid=CreateWellKnownSid(WinBuiltinAdministratorsSid,nullptr,admins,&n1) &&
+               CreateWellKnownSid(WinLocalSystemSid,nullptr,system,&n2);
+    bool hasAdmin=false,hasSystem=false;
+    if(dacl && valid){
+        for(DWORD i=0;i<dacl->AceCount;++i){
+            void* ace=nullptr;
+            if(!GetAce(dacl,i,&ace)){valid=false;break;}
+            auto* hdr=static_cast<ACE_HEADER*>(ace);
+            if(hdr->AceType!=ACCESS_ALLOWED_ACE_TYPE)continue;
+            auto* rule=static_cast<ACCESS_ALLOWED_ACE*>(ace);
+            PSID sid=&rule->SidStart;
+            if(EqualSid(sid,admins))hasAdmin=true;
+            else if(EqualSid(sid,system))hasSystem=true;
+            else valid=false;
+        }
+    } else valid=false;
+    if(sd)LocalFree(sd);
+    return valid && hasAdmin && hasSystem;
+}
 void MakeFile(const std::wstring& p) {
  HANDLE h=CreateFileW(p.c_str(),GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
  if(h!=INVALID_HANDLE_VALUE){DWORD n=0;WriteFile(h,"hello",5,&n,nullptr);CloseHandle(h);}
@@ -75,6 +100,8 @@ int wmain(){
    s=security::ReadStatus(root);
    Check(a.ok && s.aclProtected && !s.denyDelete && !s.system && !s.hidden,
          L"ACL only ON: protect inheritance without auto-deny or +S");
+   Check(RootAclOnlyAdminSystem(root),
+         L"ACL only ON: actual DACL allows exclusively Administrators/SYSTEM");
    a=security::Apply(root,security::Action::AclProtectOff);
    s=security::ReadStatus(root);
    Check(a.ok && !s.aclProtected && !s.denyDelete,
