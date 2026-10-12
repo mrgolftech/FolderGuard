@@ -107,7 +107,7 @@ bool MakeSid(WELL_KNOWN_SID_TYPE type, std::vector<BYTE>& sid) {
     DWORD size = static_cast<DWORD>(sid.size());
     return CreateWellKnownSid(type, nullptr, sid.data(), &size) != FALSE;
 }
-Result LockRoot(const std::wstring& path, bool inheritedAllow) {
+Result LockRoot(const std::wstring& path, bool inheritedAllow, bool withDeny=true) {
     std::vector<BYTE> au, admins, system;
     if (!MakeSid(WinAuthenticatedUserSid, au) || !MakeSid(WinBuiltinAdministratorsSid, admins) ||
         !MakeSid(WinLocalSystemSid, system)) return {false, L"无法创建系统安全标识符 (SID)。"};
@@ -120,13 +120,14 @@ Result LockRoot(const std::wstring& path, bool inheritedAllow) {
         e.Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
         e.Trustee.ptstrName = reinterpret_cast<LPWSTR>(sid);
     };
-    // This is an intentionally non-inherited root deny. Parent DELETE_CHILD can still allow deletion.
-    setEntry(access[0], au.data(), DELETE | FILE_DELETE_CHILD, DENY_ACCESS, NO_INHERITANCE);
+    DWORD count=0;
+    // Independent GUI ACL switch intentionally does NOT add a delete deny.
+    if(withDeny)setEntry(access[count++], au.data(),DELETE|FILE_DELETE_CHILD,DENY_ACCESS,NO_INHERITANCE);
     const DWORD inheritance = inheritedAllow ? SUB_CONTAINERS_AND_OBJECTS_INHERIT : NO_INHERITANCE;
-    setEntry(access[1], admins.data(), GENERIC_ALL, GRANT_ACCESS, inheritance);
-    setEntry(access[2], system.data(), GENERIC_ALL, GRANT_ACCESS, inheritance);
+    setEntry(access[count++], admins.data(), GENERIC_ALL, GRANT_ACCESS, inheritance);
+    setEntry(access[count++], system.data(), GENERIC_ALL, GRANT_ACCESS, inheritance);
     PACL acl = nullptr;
-    DWORD e = SetEntriesInAclW(3, access, nullptr, &acl);
+    DWORD e = SetEntriesInAclW(count, access, nullptr, &acl);
     if (e != ERROR_SUCCESS) return {false, L"构造 ACL 失败：" + ErrorText(e)};
     auto modifiable = path;
     e = SetNamedSecurityInfoW(&modifiable[0], SE_FILE_OBJECT,
@@ -135,21 +136,30 @@ Result LockRoot(const std::wstring& path, bool inheritedAllow) {
     if (e != ERROR_SUCCESS) return {false, L"写入目标 ACL 失败：" + ErrorText(e)};
     return {true, L"顶层 ACL 已设置。"};
 }
-// Independent GUI ACL operations: preserve the existing DACL and custom ACEs.
-// This changes only the inheritance/protection flag; unlike QuickUnlock it never resets ACLs.
+Result RunIcacls(const std::wstring& path,const std::wstring& args);
+Result ToggleDeleteAce(const std::wstring& p,bool enable);
+
+// ACL protection is an access restriction, not merely a DACL inheritance bit.
+// Legacy quick-lock semantics are preserved (Administrators/SYSTEM only on root).
+// This GUI action deliberately excludes the delete-deny ACE and +S.
+// Disabling resets to parent inheritance: pre-existing custom ACEs are NOT restored.
 Result ToggleAclInheritance(const std::wstring& p, bool protect) {
-    PSECURITY_DESCRIPTOR sd=nullptr;
-    PACL dacl=nullptr;
-    DWORD err=GetNamedSecurityInfoW(const_cast<LPWSTR>(p.c_str()), SE_FILE_OBJECT,
-                                    DACL_SECURITY_INFORMATION,nullptr,nullptr,&dacl,nullptr,&sd);
-    if(err!=ERROR_SUCCESS)return {false,L"读取现有 DACL 失败：" + ErrorText(err)};
-    const auto flags=DACL_SECURITY_INFORMATION |
-        (protect?PROTECTED_DACL_SECURITY_INFORMATION:UNPROTECTED_DACL_SECURITY_INFORMATION);
-    err=SetNamedSecurityInfoW(const_cast<LPWSTR>(p.c_str()),SE_FILE_OBJECT,
-                              flags,nullptr,nullptr,dacl,nullptr);
-    LocalFree(sd);
-    return err==ERROR_SUCCESS?Result{true,protect?L"已关闭 ACL 继承。":L"已启用 ACL 继承。"}:
-        Result{false,L"更新 ACL 继承失败：" + ErrorText(err)};
+    const auto previous=ReadStatus(p);
+    if(!previous.error.empty())return {false,L"读取 ACL 状态失败："+previous.error};
+    Result r;
+    if(protect)r=LockRoot(p,false,false);
+    else {
+        r=RunIcacls(p,L"/inheritance:e /q");
+        if(r.ok)r=RunIcacls(p,L"/reset /q");
+    }
+    if(!r.ok)return r;
+    // Preserve the independent delete-deny checkbox even when ACL is replaced/reset.
+    if(previous.denyDelete) {
+        r=ToggleDeleteAce(p,true);
+        if(!r.ok)return {false,L"ACL 已切换，但恢复独立禁止删除规则失败："+r.message};
+    }
+    return {true,protect?L"仅保留 Administrators/SYSTEM 对顶层目录的访问；禁止删除与属性独立。":
+        L"已恢复顶层目录继承的 ACL（原自定义 ACE 不会自动恢复）。"};
 }
 
 // FolderGuard owns only a non-inheriting, exact DELETE | DELETE_CHILD deny ACE.
