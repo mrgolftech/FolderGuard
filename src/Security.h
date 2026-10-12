@@ -3,7 +3,11 @@
 
 namespace security {
 
-enum class Action { QuickLock, QuickUnlock, FullLock, FullUnlock, SystemOn, SystemOff, HiddenOn, HiddenOff };
+enum class Action {
+    QuickLock, QuickUnlock, FullLock, FullUnlock,
+    SystemOn, SystemOff, HiddenOn, HiddenOff,
+    AclProtectOn, AclProtectOff, DenyDeleteOn, DenyDeleteOff
+};
 struct Status {
     bool exists = false;
     bool ntfs = false;
