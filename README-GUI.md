@@ -1,4 +1,4 @@
-# FolderGuard v3 · Native Windows desktop
+# FolderGuard v3.1 · Native Windows desktop
 
 **C++17 + Win32 + Direct2D 1.0 + DirectWrite**. A lightweight, native GUI for the existing PowerShell FolderGuard project, targeted at Windows 7 SP1 and Windows 10.
 
@@ -22,6 +22,16 @@
 4. Select Quick Lock / Quick Unlock, or Full Lock / Full Unlock for recursive ACL changes. `+S` is applied automatically when locking; `+H` is independently toggled.
 5. Check the status panel for root inheritance and delete-deny indicator. Use **ACL 明细** to inspect and copy individual ACEs.
 
+To open a specific folder directly from a command prompt or shortcut (the path is still validated before any modification):
+
+```powershell
+FolderGuard.exe --path "E:\\MyVault"
+```
+
+### Administrator permissions
+
+The EXE currently has a `requireAdministrator` manifest: **UAC elevation is required at application startup**, including when you only want to view ACL details. This deliberately favors a simple single-process implementation. A future version can use read-only normal-user startup with on-demand elevation for ACL modification.
+
 **Important:** The program does not prevent deletion in all ACL arrangements. Parent `DELETE_CHILD` may permit deletion despite target deny, and administrators can change DACLs. Fast lock does not protect child files with permissive ACLs. No encryption is performed. Full unlock resets ACLs and can destroy custom permissions. Never test deletion on important files.
 
 ## Build locally (Visual Studio 2022)
@@ -40,4 +50,4 @@ See [native implementation design](docs/GUI_DESIGN.md) and the [legacy PowerShel
 
 ## Current verification status
 
-CI includes NTFS backend smoke tests, a real-window GUI mouse-interaction smoke test, and screenshot capture on a Windows Server 2022 runner.  Windows 7 physical/VM runtime acceptance tests have **not** been completed. Check GitHub Actions status before using an artifact; first test on disposable data only.
+CI on Windows Server 2022 verifies **13 NTFS backend cases** plus real-window mouse actions for System/Hidden on/off and opening the ACL viewer (x64); builds x86/x64. This does **not** constitute Windows 7 SP1 or Windows 10 runtime validation, which is still required before a stable release. Check GitHub Actions status before using an artifact; first test on disposable data only.
