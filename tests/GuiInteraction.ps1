@@ -8,6 +8,8 @@ public static class NativeUiTest {
   [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr h,int id);
   [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="SendMessageW")] public static extern IntPtr GetText(IntPtr h,uint msg,IntPtr size,StringBuilder sb);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h,out Rect r);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h,out Rect r);
+  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowLongW(IntPtr h,int index);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int cmd);
   [DllImport("user32.dll")] public static extern bool UpdateWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr h);
@@ -25,7 +27,7 @@ public static class NativeUiTest {
     Rect r;
     if(!GetClientRect(hwnd,out r))throw new Exception("GetClientRect");
     int px=(r.Right-r.Left)/2;
-    int py=(int)Math.Round((r.Bottom-r.Top)*408.0/470.0);
+    int py=(int)Math.Round((r.Bottom-r.Top)*365.0/425.0);
     int lp=((py&65535)<<16)|(px&65535);
     PostMessageW(hwnd,0x201,new IntPtr(1),new IntPtr(lp));
     PostMessageW(hwnd,0x202,IntPtr.Zero,new IntPtr(lp));
@@ -67,6 +69,15 @@ try {
     if($emptyProcess.MainWindowHandle -ne [IntPtr]::Zero){$emptyHwnd=$emptyProcess.MainWindowHandle;break}
   }
   if($emptyHwnd -eq [IntPtr]::Zero){throw 'Empty GUI startup window missing'}
+  # Browser/refresh retain native BUTTON HWNDs, but are owner-drawn with
+  # hover, focus, rounded corners and a shared style matching the red Apply button.
+  foreach($id in @(104,105)){
+    $child=[NativeUiTest]::GetDlgItem($emptyHwnd,$id)
+    if($child -eq [IntPtr]::Zero){throw "Styled button $id missing"}
+    $style=[NativeUiTest]::GetWindowLongW($child,-16)
+    if(($style -band 0x0F) -ne 0x0B){throw "Button $id must be owner-drawn"}
+  }
+
   $emptyEdit=[NativeUiTest]::GetDlgItem($emptyHwnd,103)
   $emptyBuffer=[System.Text.StringBuilder]::new(1024)
   [NativeUiTest]::GetText($emptyEdit,0xD,[IntPtr]1024,$emptyBuffer)|Out-Null
@@ -119,6 +130,28 @@ try {
   [NativeUiTest]::GetText($edit,0xD,[IntPtr]1024,$buffer)|Out-Null
   if([string]$buffer -ne $path){throw "Path mismatch: $buffer expected $path"}
   Write-Host '[PASS] --path initializes selected folder'
+  # All four option controls must share one visual row at any CI architecture.
+  $positions=@()
+  foreach($id in @(106,109,107,108)){
+    $rect=[NativeUiTest+Rect]::new()
+    if(-not [NativeUiTest]::GetWindowRect([NativeUiTest]::GetDlgItem($hwnd,$id),[ref]$rect)){
+      throw "Cannot query checkbox $id position"
+    }
+    $positions+=,$rect
+  }
+  for($i=1;$i -lt 4;$i++){
+    if([math]::Abs($positions[$i].Top-$positions[0].Top) -gt 2){
+      throw 'Four option controls do not share a single horizontal row'
+    }
+    if($positions[$i].Left -le $positions[$i-1].Left){
+      throw 'Four option controls are not in left-to-right order'
+    }
+    if($positions[$i].Left -lt $positions[$i-1].Right){
+      throw 'Four option controls overlap horizontally'
+    }
+  }
+  Write-Host '[PASS] four switches align in one row without overlap'
+
   function Accept-Confirm {
     $confirm=[IntPtr]::Zero
     for($i=0;$i -lt 40;$i++){
