@@ -15,8 +15,9 @@
 
 ## Windows Server 2022 Actions 实测
 
-- [验证通过的运行记录](https://github.com/mrgolftech/FolderGuard/actions/runs/38242424170)
-- x86 和 x64 编译通过。
+- [验证通过的运行记录](https://github.com/mrgolftech/FolderGuard/actions/runs/38242633942)
+- x86 和 x64 编译通过，已同步 3.1.0 版本资源信息。
+- x64 EXE 233,984 字节；x86 EXE 187,904 字节（实际构建结果）。
 - Windows x64 管理员令牌下，**13 项 NTFS 后端测试通过，0 失败，0 跳过**：新增权限明细报告内容断言。
 - GUI 自动点击（并验证真实 NTFS 属性）：
   - System +S ✅
