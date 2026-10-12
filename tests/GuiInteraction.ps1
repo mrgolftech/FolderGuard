@@ -47,6 +47,33 @@ function Dismiss-Result {
   [NativeUiTest]::PostMessageW($dialog,0x10,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
   Start-Sleep -Milliseconds 200
 }
+# Verify fresh launches are empty and inoperative until a directory is selected.
+$emptyProcess=$null
+try {
+  $emptyProcess=Start-Process -FilePath $exe -PassThru
+  $emptyHwnd=[IntPtr]::Zero
+  for($i=0;$i -lt 35;$i++){
+    Start-Sleep -Milliseconds 200
+    $emptyProcess.Refresh()
+    if($emptyProcess.HasExited){throw 'Empty GUI startup unexpectedly exited'}
+    if($emptyProcess.MainWindowHandle -ne [IntPtr]::Zero){$emptyHwnd=$emptyProcess.MainWindowHandle;break}
+  }
+  if($emptyHwnd -eq [IntPtr]::Zero){throw 'Empty GUI startup window missing'}
+  $emptyEdit=[NativeUiTest]::GetDlgItem($emptyHwnd,103)
+  $emptyBuffer=[System.Text.StringBuilder]::new(1024)
+  [NativeUiTest]::GetText($emptyEdit,0xD,[IntPtr]1024,$emptyBuffer)|Out-Null
+  if($emptyBuffer.Length -ne 0){throw "Default path not empty: $emptyBuffer"}
+  [NativeUiTest]::Click($emptyHwnd,890,65)  # disabled refresh
+  [NativeUiTest]::Click($emptyHwnd,190,485) # disabled ACL option
+  [NativeUiTest]::Click($emptyHwnd,500,585) # disabled Apply
+  Start-Sleep -Milliseconds 350
+  if([NativeUiTest]::FindWindowW('#32770','FolderGuard · 应用设置结果') -ne [IntPtr]::Zero){
+    throw 'Apply was executable without loading a directory'
+  }
+  Write-Host '[PASS] empty initial folder; refresh, settings and Apply disabled'
+}finally{
+  if($emptyProcess -and !$emptyProcess.HasExited){Stop-Process -Id $emptyProcess.Id -Force -ErrorAction SilentlyContinue}
+}
 try {
   $process=Start-Process -FilePath $exe -ArgumentList ('--path "'+$path+'"') -PassThru
   $hwnd=[IntPtr]::Zero
@@ -88,6 +115,42 @@ try {
   Assert-Flag ([IO.FileAttributes]::Hidden) $false
   Dismiss-Result
   Write-Host '[PASS] refresh synchronizes staged toggles, Apply removes +S and +H'
+  # Exercise the quick ACL switch through the single red Apply button.
+  function Accept-Confirm {
+    $confirm=[IntPtr]::Zero
+    for($i=0;$i -lt 35;$i++){
+      Start-Sleep -Milliseconds 150
+      $confirm=[NativeUiTest]::FindWindowW('#32770','权限变更确认')
+      if($confirm -ne [IntPtr]::Zero){break}
+    }
+    if($confirm -eq [IntPtr]::Zero){throw 'Permission confirmation popup missing'}
+    $yes=[NativeUiTest]::GetDlgItem($confirm,6)
+    if($yes -eq [IntPtr]::Zero){throw 'Confirm YES button missing'}
+    [NativeUiTest]::SendMessageW($yes,0xF5,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
+  }
+  function Assert-RootProtected([bool]$expected) {
+    for($i=0;$i -lt 60;$i++){
+      Start-Sleep -Milliseconds 150
+      $isProtected=(Get-Acl -LiteralPath $path).AreAccessRulesProtected
+      if($isProtected -eq $expected){return}
+    }
+    throw "ACL protected expected=$expected actual=$((Get-Acl -LiteralPath $path).AreAccessRulesProtected)"
+  }
+  [NativeUiTest]::Click($hwnd,190,485) # ACL on, +S automatically staged
+  [NativeUiTest]::Click($hwnd,500,585)
+  Accept-Confirm
+  Assert-RootProtected $true
+  Dismiss-Result
+  Assert-Flag ([IO.FileAttributes]::System) $true
+  Write-Host '[PASS] quick ACL lock applied through GUI with automatic +S'
+  [NativeUiTest]::Click($hwnd,190,485) # ACL off
+  [NativeUiTest]::Click($hwnd,463,483) # +S off
+  [NativeUiTest]::Click($hwnd,500,585)
+  Accept-Confirm
+  Assert-RootProtected $false
+  Assert-Flag ([IO.FileAttributes]::System) $false
+  Dismiss-Result
+  Write-Host '[PASS] quick ACL unlock applied through GUI and actual state refreshed'
   Write-Host '[PASS] compact GUI interaction smoke'
 }finally{
   if($process -and !$process.HasExited){Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue}
