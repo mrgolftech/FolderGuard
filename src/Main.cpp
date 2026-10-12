@@ -118,7 +118,7 @@ void OpenAclViewer(HWND owner,const std::wstring& report) {
 
 class App {
 public:
-    bool Init(HINSTANCE instance) {
+    bool Init(HINSTANCE instance, const std::wstring& initialPath) {
         const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         comInitialized_ = SUCCEEDED(co);
         if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory_.GetAddressOf()))) return false;
@@ -142,7 +142,7 @@ public:
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT,
                 1180, 835, nullptr, nullptr, instance, this);
         if (!hwnd_) return false;
-        edit_ = CreateWindowExW(0, L"EDIT", L"E:\\FolderGuard-Test",
+        edit_ = CreateWindowExW(0, L"EDIT", initialPath.empty() ? L"E:\\FolderGuard-Test" : initialPath.c_str(),
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
                 0, 0, 100, 28, hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPathEditId)), instance, nullptr);
         font_ = CreateFontW(-18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
@@ -497,9 +497,18 @@ private:
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
+    std::wstring initialPath;
+    int argc=0;
+    LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv) {
+        for (int i=1;i+1<argc;++i) {
+            if (_wcsicmp(argv[i],L"--path")==0) { initialPath=argv[i+1];break; }
+        }
+        LocalFree(argv);
+    }
     SetProcessDPIAware(); // Available on Windows 7; D2D coordinates are explicitly 96 dpi pixels.
     App app;
-    if (!app.Init(instance)) {
+    if (!app.Init(instance, initialPath)) {
         MessageBoxW(nullptr, L"无法初始化 Direct2D / DirectWrite 窗口。", L"FolderGuard", MB_ICONERROR);
         return 1;
     }
