@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 # FolderGuard v2.3 - Windows PowerShell 5.1 - root anti-delete ACL
 # Scope: user-selected NTFS data directory, never the actual Windows Recycle Bin.
 $ErrorActionPreference = 'Stop'
