@@ -10,14 +10,21 @@ public static class NativeUiTest {
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h,out Rect r);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int cmd);
   [DllImport("user32.dll")] public static extern bool UpdateWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr h);
+  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern bool SetWindowTextW(IntPtr h,string text);
   [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll")] public static extern IntPtr SendMessageW(IntPtr h,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowW(string klass,string caption);
-  public static void Click(IntPtr hwnd,int x,int y) {
+  public static void ClickChild(IntPtr parent,int id) {
+    IntPtr child=GetDlgItem(parent,id);
+    if(child==IntPtr.Zero)throw new Exception("Missing control ID "+id);
+    SendMessageW(child,0xF5,IntPtr.Zero,IntPtr.Zero); // BM_CLICK on native checkbox/button
+  }
+  public static void ClickApply(IntPtr hwnd) {
     Rect r;
     if(!GetClientRect(hwnd,out r))throw new Exception("GetClientRect");
-    int px=(int)Math.Round(x*(r.Right-r.Left)/1000.0);
-    int py=(int)Math.Round(y*(r.Bottom-r.Top)/680.0);
+    int px=(r.Right-r.Left)/2;
+    int py=(int)Math.Round((r.Bottom-r.Top)*453.5/510.0);
     int lp=((py&65535)<<16)|(px&65535);
     PostMessageW(hwnd,0x201,new IntPtr(1),new IntPtr(lp));
     PostMessageW(hwnd,0x202,IntPtr.Zero,new IntPtr(lp));
@@ -63,14 +70,26 @@ try {
   $emptyBuffer=[System.Text.StringBuilder]::new(1024)
   [NativeUiTest]::GetText($emptyEdit,0xD,[IntPtr]1024,$emptyBuffer)|Out-Null
   if($emptyBuffer.Length -ne 0){throw "Default path not empty: $emptyBuffer"}
-  [NativeUiTest]::Click($emptyHwnd,890,65)  # disabled refresh
-  [NativeUiTest]::Click($emptyHwnd,190,485) # disabled ACL option
-  [NativeUiTest]::Click($emptyHwnd,500,585) # disabled Apply
+  foreach($id in @(105,106,107,108)){
+    $child=[NativeUiTest]::GetDlgItem($emptyHwnd,$id)
+    if($child -eq [IntPtr]::Zero){throw "Native child control $id missing"}
+    if([NativeUiTest]::IsWindowEnabled($child)){throw "Control $id enabled before folder load"}
+  }
+  [NativeUiTest]::ClickApply($emptyHwnd) # disabled Apply
   Start-Sleep -Milliseconds 350
   if([NativeUiTest]::FindWindowW('#32770','FolderGuard · 应用设置结果') -ne [IntPtr]::Zero){
     throw 'Apply was executable without loading a directory'
   }
-  Write-Host '[PASS] empty initial folder; refresh, settings and Apply disabled'
+  Write-Host '[PASS] empty initial folder; native refresh, settings and Apply disabled'
+  if(-not [NativeUiTest]::SetWindowTextW($emptyEdit,$path)){throw 'Failed to populate path field'}
+  [NativeUiTest]::PostMessageW($emptyEdit,0x100,[IntPtr]13,[IntPtr]0)|Out-Null
+  $loaded=$false
+  for($i=0;$i -lt 40;$i++){
+    Start-Sleep -Milliseconds 100
+    if([NativeUiTest]::IsWindowEnabled([NativeUiTest]::GetDlgItem($emptyHwnd,105))){$loaded=$true;break}
+  }
+  if(!$loaded){throw 'Enter in path edit did not load the folder'}
+  Write-Host '[PASS] Enter key loads a manually entered folder without Load button'
 }finally{
   if($emptyProcess -and !$emptyProcess.HasExited){Stop-Process -Id $emptyProcess.Id -Force -ErrorAction SilentlyContinue}
 }
@@ -93,24 +112,24 @@ try {
   [NativeUiTest]::GetText($edit,0xD,[IntPtr]1024,$buffer)|Out-Null
   if([string]$buffer -ne $path){throw "Path mismatch: $buffer expected $path"}
   Write-Host '[PASS] --path initializes selected folder'
-  [NativeUiTest]::Click($hwnd,463,483) # select System +S; no FS modification yet
-  [NativeUiTest]::Click($hwnd,748,483) # select Hidden +H
+  [NativeUiTest]::ClickChild($hwnd,107) # select System +S; no FS modification yet
+  [NativeUiTest]::ClickChild($hwnd,108) # select Hidden +H
   Start-Sleep -Milliseconds 250
   $attrs=[IO.File]::GetAttributes($path)
   if(($attrs -band ([IO.FileAttributes]::Hidden -bor [IO.FileAttributes]::System)) -ne 0){
     throw 'Options modified NTFS before Apply was clicked'
   }
   Write-Host '[PASS] options are staged until Apply'
-  [NativeUiTest]::Click($hwnd,500,587)
+  [NativeUiTest]::ClickApply($hwnd)
   Assert-Flag ([IO.FileAttributes]::System) $true
   Assert-Flag ([IO.FileAttributes]::Hidden) $true
   Dismiss-Result
   Write-Host '[PASS] consolidated Apply sets +S and +H and reports result'
-  [NativeUiTest]::Click($hwnd,890,65) # refresh status: must re-adopt real flags
+  [NativeUiTest]::ClickChild($hwnd,105) # refresh status: must re-adopt real flags
   Start-Sleep -Milliseconds 250
-  [NativeUiTest]::Click($hwnd,463,483)
-  [NativeUiTest]::Click($hwnd,748,483)
-  [NativeUiTest]::Click($hwnd,500,587)
+  [NativeUiTest]::ClickChild($hwnd,107)
+  [NativeUiTest]::ClickChild($hwnd,108)
+  [NativeUiTest]::ClickApply($hwnd)
   Assert-Flag ([IO.FileAttributes]::System) $false
   Assert-Flag ([IO.FileAttributes]::Hidden) $false
   Dismiss-Result
@@ -136,16 +155,16 @@ try {
     }
     throw "ACL protected expected=$expected actual=$((Get-Acl -LiteralPath $path).AreAccessRulesProtected)"
   }
-  [NativeUiTest]::Click($hwnd,190,485) # ACL on, +S automatically staged
-  [NativeUiTest]::Click($hwnd,500,585)
+  [NativeUiTest]::ClickChild($hwnd,106) # ACL on, +S automatically staged
+  [NativeUiTest]::ClickApply($hwnd)
   Accept-Confirm
   Assert-RootProtected $true
   Dismiss-Result
   Assert-Flag ([IO.FileAttributes]::System) $true
   Write-Host '[PASS] quick ACL lock applied through GUI with automatic +S'
-  [NativeUiTest]::Click($hwnd,190,485) # ACL off
-  [NativeUiTest]::Click($hwnd,463,483) # +S off
-  [NativeUiTest]::Click($hwnd,500,585)
+  [NativeUiTest]::ClickChild($hwnd,106) # ACL off
+  [NativeUiTest]::ClickChild($hwnd,107) # +S off
+  [NativeUiTest]::ClickApply($hwnd)
   Accept-Confirm
   Assert-RootProtected $false
   Assert-Flag ([IO.FileAttributes]::System) $false
