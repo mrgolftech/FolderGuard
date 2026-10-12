@@ -8,6 +8,8 @@ public static class NativeUiTest {
   [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left,Top,Right,Bottom; }
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr GetDlgItem(IntPtr h,int id);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool SetWindowTextW(IntPtr h,string text);
+  [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="SendMessageW")]
+  public static extern IntPtr GetText(IntPtr hwnd,uint msg,IntPtr wParam,StringBuilder buffer);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h,out Rect r);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h,out Rect r);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h,IntPtr dc,uint flags);
@@ -43,11 +45,16 @@ try {
   if($hwnd -eq [IntPtr]::Zero){throw 'GUI main window was not found'}
   $edit=[NativeUiTest]::GetDlgItem($hwnd,103)
   if($edit -eq [IntPtr]::Zero){throw 'Path edit control ID 103 missing'}
-  if(-not [NativeUiTest]::SetWindowTextW($edit,$path)){throw 'Path editing failed'}
   [NativeUiTest]::ShowWindow($hwnd,5)|Out-Null
   [NativeUiTest]::InvalidateRect($hwnd,[IntPtr]::Zero,$false)|Out-Null
   [NativeUiTest]::UpdateWindow($hwnd)|Out-Null
-  Start-Sleep -Milliseconds 1400
+  Start-Sleep -Milliseconds 1200
+  if(-not [NativeUiTest]::SetWindowTextW($edit,$path)){throw 'Path editing failed'}
+  Start-Sleep -Milliseconds 300
+  $buffer=New-Object System.Text.StringBuilder(1024)
+  [NativeUiTest]::GetText($edit,0x000D,[IntPtr]1024,$buffer)|Out-Null
+  Write-Host "[TRACE] GUI text='$buffer' expected='$path'"
+  if([string]$buffer -ne $path){throw 'GUI edit field was not updated to requested path'}
   Write-Host "[TRACE] target=$path clientWindow=$hwnd; initialAttr=$([IO.File]::GetAttributes($path))"
   function Save-GuiSnapshot {
     try {
