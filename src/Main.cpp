@@ -111,6 +111,10 @@ public:
            WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,0,0,200,27,
            hwnd_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(kHiddenId)),inst,nullptr);
         if(!edit_||!browse_||!refresh_||!acl_||!sys_||!hidden_)return false;
+        // Handle Enter within the actual edit HWND, including IME-aware native editing.
+        SetWindowLongPtrW(edit_,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(this));
+        oldEditProc_=reinterpret_cast<WNDPROC>(
+            SetWindowLongPtrW(edit_,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(&EditWndProc)));
         font_=CreateFontW(-Px(14),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
           OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
         for(HWND child:{edit_,browse_,refresh_,acl_,sys_,hidden_})
@@ -135,7 +139,7 @@ public:
         while(GetMessageW(&msg,nullptr,0,0)>0){
             // ENTER on the path field loads it; Tab/Space navigate real Win32 controls.
             if(msg.hwnd==edit_ && msg.message==WM_KEYDOWN && msg.wParam==VK_RETURN){
-                LoadSelected(true);continue;
+                TranslateMessage(&msg);DispatchMessageW(&msg);continue;
             }
             if(!IsDialogMessageW(hwnd_,&msg)){TranslateMessage(&msg);DispatchMessageW(&msg);}
         }
@@ -144,6 +148,7 @@ public:
 private:
     HINSTANCE inst_{};
     HWND hwnd_{},edit_{},browse_{},refresh_{},acl_{},sys_{},hidden_{};
+    WNDPROC oldEditProc_{};
     float scale_=1.f;
     HFONT font_{};
     HBRUSH editBrush_{},checkBrush_{};
@@ -183,6 +188,16 @@ private:
             out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
             out->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
+    }
+    static LRESULT CALLBACK EditWndProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
+        auto* self=reinterpret_cast<App*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
+        if(self && msg==WM_KEYDOWN && wp==VK_RETURN){
+            self->LoadSelected(true);
+            return 0;
+        }
+        return self && self->oldEditProc_?
+            CallWindowProcW(self->oldEditProc_,hwnd,msg,wp,lp):
+            DefWindowProcW(hwnd,msg,wp,lp);
     }
     static LRESULT CALLBACK WndProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
         App* self=reinterpret_cast<App*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
