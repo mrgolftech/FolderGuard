@@ -9,13 +9,18 @@ public static class NativeUiTest {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool SetWindowTextW(IntPtr h,string text);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h,out Rect r);
   [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h,uint msg,IntPtr wp,IntPtr lp);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int cmd);
+  [DllImport("user32.dll")] public static extern bool InvalidateRect(IntPtr h,IntPtr rect,bool erase);
+  [DllImport("user32.dll")] public static extern bool UpdateWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr SendMessageW(IntPtr h,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowW(string klass,string title);
   public static void Click(IntPtr hwnd,int x,int y){
     Rect r; if(!GetClientRect(hwnd,out r)) throw new Exception("GetClientRect failed");
     int px=(int)Math.Round(x*(r.Right-r.Left)/1180.0);
     int py=(int)Math.Round(y*(r.Bottom-r.Top)/820.0);
     int packed=((py&0xffff)<<16)|(px&0xffff);
-    if(!PostMessageW(hwnd,0x202,IntPtr.Zero,new IntPtr(packed)))throw new Exception("click post failed");
+    SendMessageW(hwnd,0x201,new IntPtr(1),new IntPtr(packed));
+    SendMessageW(hwnd,0x202,IntPtr.Zero,new IntPtr(packed));
   }
 }
 '@
@@ -36,14 +41,18 @@ try {
   $edit=[NativeUiTest]::GetDlgItem($hwnd,103)
   if($edit -eq [IntPtr]::Zero){throw 'Path edit control ID 103 missing'}
   if(-not [NativeUiTest]::SetWindowTextW($edit,$path)){throw 'Path editing failed'}
-  Start-Sleep -Milliseconds 200
+  [NativeUiTest]::ShowWindow($hwnd,5)|Out-Null
+  [NativeUiTest]::InvalidateRect($hwnd,[IntPtr]::Zero,$false)|Out-Null
+  [NativeUiTest]::UpdateWindow($hwnd)|Out-Null
+  Start-Sleep -Milliseconds 1400
+  Write-Host "[TRACE] target=$path clientWindow=$hwnd; initialAttr=$([IO.File]::GetAttributes($path))"
   function Wait-Flag($flag,$enabled) {
     for($i=0;$i -lt 50;$i++){
       Start-Sleep -Milliseconds 150
       $got=([IO.File]::GetAttributes($path) -band $flag) -ne 0
       if($got -eq $enabled){return}
     }
-    throw "Attribute $flag did not change to $enabled"
+    throw "Attribute $flag did not change to $enabled; actual=$([IO.File]::GetAttributes($path))"
   }
   [NativeUiTest]::Click($hwnd,450,708)
   Wait-Flag ([IO.FileAttributes]::System) $true
