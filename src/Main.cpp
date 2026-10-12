@@ -30,7 +30,7 @@ constexpr UINT kDone=WM_APP+11;
 constexpr UINT kPathId=103;
 constexpr UINT kBrowseId=104, kRefreshId=105;
 constexpr UINT kAclId=106, kSystemId=107, kHiddenId=108, kDeleteId=109;
-constexpr float W=760.f, H=470.f;
+constexpr float W=760.f, H=425.f;
 D2D1_COLOR_F Color(unsigned rgb,float alpha=1.f){
     return D2D1::ColorF(float((rgb>>16)&255)/255.f,float((rgb>>8)&255)/255.f,float(rgb&255)/255.f,alpha);
 }
@@ -73,7 +73,7 @@ public:
             work={0,0,GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN)};
         // Uniform scaling: respect system DPI, but fit on smaller Windows 7 screens.
         const float fitW=float(work.right-work.left-32)/790.f;
-        const float fitH=float(work.bottom-work.top-32)/520.f;
+        const float fitH=float(work.bottom-work.top-32)/475.f;
         scale_=std::max(.8f,std::min(float(dpi)/96.f,std::min(fitW,fitH)));
 
         WNDCLASSEXW cls={sizeof(cls)};
@@ -96,10 +96,10 @@ public:
            WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
            0,0,100,30,hwnd_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPathId)),inst,nullptr);
         browse_=CreateWindowExW(0,L"BUTTON",L"浏览…",
-           WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,0,0,90,30,
+           WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,90,30,
            hwnd_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrowseId)),inst,nullptr);
         refresh_=CreateWindowExW(0,L"BUTTON",L"刷新状态",
-           WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,0,0,90,29,
+           WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,90,29,
            hwnd_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(kRefreshId)),inst,nullptr);
         acl_=CreateWindowExW(0,L"BUTTON",L"ACL 权限保护",
            WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,0,0,200,27,
@@ -114,6 +114,14 @@ public:
            WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,0,0,200,27,
            hwnd_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(kHiddenId)),inst,nullptr);
         if(!edit_||!browse_||!refresh_||!acl_||!deny_||!sys_||!hidden_)return false;
+        // Keep native button focus and keyboard activation, while custom-painting
+        // browse/refresh to match the Direct2D Apply button's rounded treatment.
+        for(HWND button:{browse_,refresh_}){
+            SetWindowLongPtrW(button,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(this));
+            if(!oldButtonProc_)oldButtonProc_=reinterpret_cast<WNDPROC>(
+                SetWindowLongPtrW(button,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(&ButtonWndProc)));
+            else SetWindowLongPtrW(button,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(&ButtonWndProc));
+        }
         // Handle Enter within the actual edit HWND, including IME-aware native editing.
         SetWindowLongPtrW(edit_,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(this));
         oldEditProc_=reinterpret_cast<WNDPROC>(
@@ -151,7 +159,7 @@ public:
 private:
     HINSTANCE inst_{};
     HWND hwnd_{},edit_{},browse_{},refresh_{},acl_{},deny_{},sys_{},hidden_{};
-    WNDPROC oldEditProc_{};
+    WNDPROC oldEditProc_{},oldButtonProc_{};
     float scale_=1.f;
     HFONT font_{};
     HBRUSH editBrush_{},checkBrush_{};
@@ -200,6 +208,62 @@ private:
             CallWindowProcW(self->oldEditProc_,hwnd,msg,wp,lp):
             DefWindowProcW(hwnd,msg,wp,lp);
     }
+    static LRESULT CALLBACK ButtonWndProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
+        auto* self=reinterpret_cast<App*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
+        if(self && (msg==WM_MOUSEMOVE || msg==WM_MOUSELEAVE)){
+            if(msg==WM_MOUSEMOVE){
+                TRACKMOUSEEVENT track={sizeof(track),TME_LEAVE,hwnd,0};
+                TrackMouseEvent(&track);
+            }
+            InvalidateRect(hwnd,nullptr,FALSE);
+        }
+        return self && self->oldButtonProc_?
+            CallWindowProcW(self->oldButtonProc_,hwnd,msg,wp,lp):
+            DefWindowProcW(hwnd,msg,wp,lp);
+    }
+    void DrawAuxButton(const DRAWITEMSTRUCT* item){
+        const bool isBrowse=item->CtlID==kBrowseId;
+        const bool enabled=(item->itemState&ODS_DISABLED)==0;
+        const bool pressed=(item->itemState&ODS_SELECTED)!=0;
+        POINT mouse{};
+        GetCursorPos(&mouse);
+        RECT onScreen{};
+        GetWindowRect(item->hwndItem,&onScreen);
+        const bool hover=enabled && PtInRect(&onScreen,mouse)!=FALSE;
+        // The colors and radius mirror the main Apply button; browser is blue
+        // primary action, refresh is a quieter blue-outline secondary action.
+        const COLORREF fill=!enabled?RGB(234,238,244):
+            isBrowse?(pressed?RGB(37,76,140):hover?RGB(41,86,158):RGB(54,106,185)):
+            (pressed?RGB(215,229,249):hover?RGB(230,239,252):RGB(247,250,255));
+        const COLORREF outline=!enabled?RGB(221,226,233):
+            isBrowse?(hover?RGB(41,86,158):RGB(54,106,185)):RGB(185,203,228);
+        const COLORREF ink=!enabled?RGB(162,174,191):
+            isBrowse?RGB(255,255,255):RGB(48,84,132);
+        HBRUSH brush=CreateSolidBrush(fill);
+        HPEN pen=CreatePen(PS_SOLID,std::max(1,Px(1)),outline);
+        HGDIOBJ oldBrush=SelectObject(item->hDC,brush);
+        HGDIOBJ oldPen=SelectObject(item->hDC,pen);
+        const auto& rc=item->rcItem;
+        RoundRect(item->hDC,rc.left+1,rc.top+1,rc.right-1,rc.bottom-1,Px(18),Px(18));
+        SelectObject(item->hDC,oldBrush);
+        SelectObject(item->hDC,oldPen);
+        DeleteObject(brush);
+        DeleteObject(pen);
+        const auto previous=SetBkMode(item->hDC,TRANSPARENT);
+        const auto oldColor=SetTextColor(item->hDC,ink);
+        HGDIOBJ oldFont=SelectObject(item->hDC,font_);
+        RECT textRect=rc;
+        DrawTextW(item->hDC,isBrowse?L"浏览…":L"刷新状态",-1,&textRect,
+                  DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+        SelectObject(item->hDC,oldFont);
+        SetTextColor(item->hDC,oldColor);
+        SetBkMode(item->hDC,previous);
+        if(item->itemState&ODS_FOCUS){
+            RECT focusRect=rc;
+            InflateRect(&focusRect,-Px(5),-Px(5));
+            DrawFocusRect(item->hDC,&focusRect);
+        }
+    }
     static LRESULT CALLBACK WndProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
         App* self=reinterpret_cast<App*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
         if(msg==WM_NCCREATE){
@@ -215,7 +279,7 @@ private:
         case WM_GETMINMAXINFO:{
             auto* mm=reinterpret_cast<MINMAXINFO*>(lp);
             mm->ptMinTrackSize.x=Px(700);
-            mm->ptMinTrackSize.y=Px(490);
+            mm->ptMinTrackSize.y=Px(445);
             return 0;
         }
         case WM_SIZE:
@@ -235,6 +299,14 @@ private:
                 Click(hit.id);break;
             }
             return 0;
+        }
+        case WM_DRAWITEM:{
+            const auto* item=reinterpret_cast<DRAWITEMSTRUCT*>(lp);
+            if(item && (item->CtlID==kBrowseId || item->CtlID==kRefreshId)){
+                DrawAuxButton(item);
+                return TRUE;
+            }
+            break;
         }
         case WM_COMMAND:{
             const UINT id=LOWORD(wp),code=HIWORD(wp);
@@ -300,14 +372,14 @@ private:
     void LayoutControls(){
         if(!edit_)return;
         const float w=Width();
-        const float col=(w-72.f)/2.f;
-        Place(edit_,36,95,w-172,33);
-        Place(browse_,w-124,95,88,33);
-        Place(refresh_,w-126,161,90,29);
-        Place(acl_,40,302,col-20,28);
-        Place(deny_,40+col,302,col-20,28);
-        Place(sys_,40,344,col-20,28);
-        Place(hidden_,40+col,344,col-20,28);
+        const float col=(w-72.f)/4.f;
+        Place(edit_,36,92,w-172,32);
+        Place(browse_,w-124,92,88,32);
+        Place(refresh_,w-136,147,100,31);
+        Place(acl_,40,295,col-6,32);
+        Place(deny_,40+col,295,col-6,32);
+        Place(sys_,40+col*2,295,col-6,32);
+        Place(hidden_,40+col*3,295,col-6,32);
     }
     std::wstring EditPath()const{
         int len=GetWindowTextLengthW(edit_);
@@ -500,34 +572,28 @@ private:
         Text(L"文件夹权限与属性管理",{330,21,w-358,25},small_.Get(),0x74869B,
              DWRITE_TEXT_ALIGNMENT_TRAILING);
 
-        Shape({margin,55,cardW,90},0xFFFFFF,11,0xE0E7F0);
-        Text(L"目标文件夹",{36,63,180,27},section_.Get(),0x263B59);
-        Text(notice_,{37,131,w-74,20},tiny_.Get(),success_?0x59738D:0xB44B55);
+        Shape({margin,55,cardW,75},0xFFFFFF,11,0xE0E7F0);
+        Text(L"目标文件夹",{36,62,180,26},section_.Get(),0x263B59);
 
-        Shape({margin,155,cardW,101},0xFFFFFF,11,0xE0E7F0);
-        Text(L"当前保护状态",{36,165,260,28},section_.Get(),0x263B59);
+        Shape({margin,139,cardW,108},0xFFFFFF,11,0xE0E7F0);
+        Text(L"当前保护状态",{36,148,260,28},section_.Get(),0x263B59);
         const float gap=8.f,chipW=(w-72.f-3*gap)/4.f;
-        Chip({36,196,chipW,48},L"ACL 权限",ready_&&actual_.aclProtected);
-        Chip({36+chipW+gap,196,chipW,48},L"禁止删除",ready_&&actual_.denyDelete);
-        Chip({36+(chipW+gap)*2,196,chipW,48},L"系统属性 +S",ready_&&actual_.system);
-        Chip({36+(chipW+gap)*3,196,chipW,48},L"隐藏属性 +H",ready_&&actual_.hidden);
+        Chip({36,181,chipW,47},L"ACL 权限",ready_&&actual_.aclProtected);
+        Chip({36+chipW+gap,181,chipW,47},L"禁止删除",ready_&&actual_.denyDelete);
+        Chip({36+(chipW+gap)*2,181,chipW,47},L"系统属性 +S",ready_&&actual_.system);
+        Chip({36+(chipW+gap)*3,181,chipW,47},L"隐藏属性 +H",ready_&&actual_.hidden);
+        Text(notice_,{37,228,w-74,19},tiny_.Get(),success_?0x59738D:0xB44B55);
 
-        Shape({margin,265,cardW,114},0xFFFFFF,11,0xE0E7F0);
-        Text(L"设置选项",{36,274,180,27},section_.Get(),0x263B59);
-        Text(modified_?L"有未应用的更改":L"与磁盘实际状态同步",
-             {w-266,275,228,25},small_.Get(),modified_?0xB74B58:0x71859B,
-             DWRITE_TEXT_ALIGNMENT_TRAILING);
-        const float col=(w-72.f)/2.f;
-        Text(L"顶层目录仅允许管理员及 SYSTEM",{63,326,col-25,20},tiny_.Get(),0x75869D);
-        Text(L"独立添加 / 移除删除拒绝规则",{63+col,326,col-25,20},tiny_.Get(),0x75869D);
-        Text(L"仅控制系统属性",{63,368,col-25,18},tiny_.Get(),0x75869D);
-        Text(L"仅控制隐藏属性",{63+col,368,col-25,18},tiny_.Get(),0x75869D);
+        Shape({margin,256,cardW,78},0xFFFFFF,11,0xE0E7F0);
+        Text(L"设置选项",{36,265,180,28},section_.Get(),0x263B59);
+        if(modified_)Text(L"有未应用的更改",{w-244,266,206,24},small_.Get(),0xB74B58,
+                          DWRITE_TEXT_ALIGNMENT_TRAILING);
 
-        Button(Control::Apply,{margin,h-84,cardW,44},
+        Button(Control::Apply,{margin,h-82,cardW,44},
                busy_?L"正在应用设置…":L"应用设置",ready_&&!busy_,true);
-        Text(L"v0.0.1  ·  Windows 7 / 10",{24,h-31,310,25},small_.Get(),0x60758F);
-        hits_.push_back({Control::GitHub,{w-209,h-32,188,26},true});
-        Text(L"GitHub / mrgolftech ↗",{w-225,h-31,205,25},small_.Get(),
+        Text(L"v0.0.1  ·  Windows 7 / 10",{24,h-29,310,25},small_.Get(),0x60758F);
+        hits_.push_back({Control::GitHub,{w-209,h-30,188,26},true});
+        Text(L"GitHub / mrgolftech ↗",{w-225,h-29,205,25},small_.Get(),
              0x3265AC,DWRITE_TEXT_ALIGNMENT_TRAILING);
         if(FAILED(target_->EndDraw()))target_.Reset();
     }
