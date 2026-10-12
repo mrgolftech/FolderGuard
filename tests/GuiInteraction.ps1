@@ -1,4 +1,5 @@
 $ErrorActionPreference='Stop'
+Add-Type -AssemblyName System.Drawing
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -8,6 +9,8 @@ public static class NativeUiTest {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr GetDlgItem(IntPtr h,int id);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool SetWindowTextW(IntPtr h,string text);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h,out Rect r);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h,out Rect r);
+  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h,IntPtr dc,uint flags);
   [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int cmd);
   [DllImport("user32.dll")] public static extern bool InvalidateRect(IntPtr h,IntPtr rect,bool erase);
@@ -46,12 +49,28 @@ try {
   [NativeUiTest]::UpdateWindow($hwnd)|Out-Null
   Start-Sleep -Milliseconds 1400
   Write-Host "[TRACE] target=$path clientWindow=$hwnd; initialAttr=$([IO.File]::GetAttributes($path))"
+  function Save-GuiSnapshot {
+    try {
+      [NativeUiTest+Rect]$bounds=New-Object NativeUiTest+Rect
+      [NativeUiTest]::GetWindowRect($hwnd,[ref]$bounds)|Out-Null
+      $w=$bounds.Right-$bounds.Left;$h=$bounds.Bottom-$bounds.Top
+      $bmp=New-Object System.Drawing.Bitmap($w,$h)
+      $g=[System.Drawing.Graphics]::FromImage($bmp)
+      $dc=$g.GetHdc()
+      try { [NativeUiTest]::PrintWindow($hwnd,$dc,0)|Out-Null } finally { $g.ReleaseHdc($dc) }
+      New-Item -ItemType Directory -Path 'artifacts' -Force|Out-Null
+      $bmp.Save((Join-Path (Resolve-Path 'artifacts').Path 'GUI-attribute-debug.png'),[System.Drawing.Imaging.ImageFormat]::Png)
+      $g.Dispose();$bmp.Dispose()
+      Write-Host '[TRACE] GUI debug screenshot saved'
+    }catch {Write-Warning "Debug screenshot failed: $_"}
+  }
   function Wait-Flag($flag,$enabled) {
     for($i=0;$i -lt 50;$i++){
       Start-Sleep -Milliseconds 150
       $got=([IO.File]::GetAttributes($path) -band $flag) -ne 0
       if($got -eq $enabled){return}
     }
+    Save-GuiSnapshot
     throw "Attribute $flag did not change to $enabled; actual=$([IO.File]::GetAttributes($path))"
   }
   [NativeUiTest]::Click($hwnd,450,708)
