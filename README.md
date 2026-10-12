@@ -14,6 +14,16 @@ Windows 10/11 文件夹隐藏与 NTFS ACL 访问控制工具（PowerShell 5.1）
 
 > **注意：本工具不是加密软件，也不能保证阻止管理员或拥有父目录 `DELETE_CHILD` 权限的用户删除文件夹。** 首次使用请务必在空测试目录验证。
 
+## 当前 GUI 版本：FolderGuard v3.2
+
+原生 C++ + Win32 + Direct2D 浅色单页 GUI，目标兼容 Windows 7 SP1 与 Windows 10。提供紧凑界面、默认空目录、实际 ACL/属性状态同步、快速 ACL 及 +S/+H 统一应用。
+
+- [GUI 版本使用说明](README-GUI.md)
+- [v3.2 GUI 设计与测试](docs/GUI_V3_2_DESIGN.md)
+- [Windows x86/x64 构建下载](https://github.com/mrgolftech/FolderGuard/actions/workflows/native-build.yml)
+
+> 下面是继续保留的 PowerShell v2.3 命令行版本说明。
+
 ## 功能
 
 - 交互式中文菜单，支持自定义目标文件夹路径，自动创建不存在的目录。
