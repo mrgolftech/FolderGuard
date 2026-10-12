@@ -229,6 +229,83 @@ Status ReadStatus(const std::wstring& input) {
     return s;
 }
 
+
+std::wstring DescribeAcl(const std::wstring& input) {
+    auto path = Canonical(input);
+    if (path.empty()) return L"无效目录路径。\r\n";
+    std::wstring reason;
+    if (!SafePath(path, reason)) return reason + L"\r\n";
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    PACL dacl = nullptr;
+    PSID owner = nullptr;
+    DWORD err = GetNamedSecurityInfoW(const_cast<LPWSTR>(path.c_str()), SE_FILE_OBJECT,
+       OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner, nullptr, &dacl, nullptr, &sd);
+    if (err != ERROR_SUCCESS) return L"读取 ACL 失败：" + ErrorText(err);
+    auto sidText = [](PSID sid) -> std::wstring {
+        if (!sid || !IsValidSid(sid)) return L"(none)";
+        DWORD n=0,m=0; SID_NAME_USE kind{};
+        LookupAccountSidW(nullptr,sid,nullptr,&n,nullptr,&m,&kind);
+        std::vector<wchar_t> name(n+2), domain(m+2);
+        if (LookupAccountSidW(nullptr,sid,name.data(),&n,domain.data(),&m,&kind)) {
+            std::wstring dn(domain.data());
+            return (dn.empty() ? L"" : dn+L"\\") + name.data();
+        }
+        LPWSTR stringSid=nullptr;
+        std::wstring result=L"(unknown)";
+        if (ConvertSidToStringSidW(sid,&stringSid) && stringSid) {
+            result=stringSid; LocalFree(stringSid);
+        }
+        return result;
+    };
+    wchar_t hex[64]={};
+    std::wstring report=L"FolderGuard 详细 NTFS ACL 报告\r\n";
+    report+=L"--------------------------------------------------------\r\n";
+    report+=L"路径：" + path + L"\r\n";
+    report+=L"所有者：" + sidText(owner) + L"\r\n";
+    SECURITY_DESCRIPTOR_CONTROL control{};
+    DWORD revision=0;
+    if (GetSecurityDescriptorControl(sd,&control,&revision)) {
+        report+=std::wstring(L"继承状态：") + ((control & SE_DACL_PROTECTED)?L"已关闭 (Protected)":L"已启用 (Inherited)") + L"\r\n";
+    }
+    if (!dacl) {
+        report+=L"\r\nDACL: NULL（危险：通常允许任何账户访问）\r\n";
+    } else {
+        report+=L"DACL ACE 数量：" + std::to_wstring(dacl->AceCount) + L"\r\n\r\n";
+        for (DWORD i=0;i<dacl->AceCount;++i) {
+            void* ace=nullptr;
+            if (!GetAce(dacl,i,&ace)) continue;
+            auto* hd=static_cast<ACE_HEADER*>(ace);
+            report+=L"#"+std::to_wstring(i+1)+L"   ";
+            const bool allowed=hd->AceType==ACCESS_ALLOWED_ACE_TYPE;
+            const bool denied=hd->AceType==ACCESS_DENIED_ACE_TYPE;
+            if (!allowed && !denied) {
+                report+=L"其他 ACE 类型："+std::to_wstring(hd->AceType)+L"\r\n";
+                continue;
+            }
+            auto* common=static_cast<ACCESS_ALLOWED_ACE*>(ace);
+            report+=allowed?L"ALLOW  ":L"DENY   ";
+            report+=sidText(&common->SidStart)+L"\r\n";
+            swprintf_s(hex, L"0x%08lX", static_cast<unsigned long>(common->Mask));
+            report+=std::wstring(L"      权限掩码：")+hex;
+            if (common->Mask & DELETE) report+=L"  [DELETE]";
+            if (common->Mask & FILE_DELETE_CHILD) report+=L"  [DELETE_CHILD]";
+            if (common->Mask & GENERIC_ALL) report+=L"  [GENERIC_ALL]";
+            if (common->Mask & FILE_READ_DATA) report+=L"  [READ/LIST]";
+            if (common->Mask & FILE_WRITE_DATA) report+=L"  [WRITE/CREATE]";
+            report+=L"\r\n";
+            report+=std::wstring(L"      来源：")+
+               ((hd->AceFlags & INHERITED_ACE)?L"父目录继承":L"显式设置")+
+               ((hd->AceFlags & CONTAINER_INHERIT_ACE)?L"  [子目录继承]":L"")+
+               ((hd->AceFlags & OBJECT_INHERIT_ACE)?L"  [文件继承]":L"")+
+               ((hd->AceFlags & INHERIT_ONLY_ACE)?L"  [仅继承]":L"") + L"\r\n";
+        }
+    }
+    report+=L"\r\n注意：父目录 DELETE_CHILD 仍可能允许删除此目录。\r\n";
+    report+=L"当前报告只读取顶层目录，不会修改 ACL，也不会遍历子文件。\r\n";
+    if (sd) LocalFree(sd);
+    return report;
+}
+
 Result Apply(const std::wstring& input, Action action) {
     const auto p = Canonical(input);
     auto guarded = Guard(p, false);
