@@ -1,5 +1,3 @@
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
 #include <windows.h>
 #include <windowsx.h>
 #include <shobjidl.h>
@@ -73,7 +71,7 @@ public:
         if (!hwnd_) return false;
         edit_ = CreateWindowExW(0, L"EDIT", L"E:\\FolderGuard-Test",
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-                0, 0, 100, 28, hwnd_, reinterpret_cast<HMENU>(kPathEditId), instance, nullptr);
+                0, 0, 100, 28, hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPathEditId)), instance, nullptr);
         font_ = CreateFontW(-18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         SendMessageW(edit_, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
