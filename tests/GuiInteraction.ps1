@@ -25,7 +25,7 @@ public static class NativeUiTest {
     Rect r;
     if(!GetClientRect(hwnd,out r))throw new Exception("GetClientRect");
     int px=(r.Right-r.Left)/2;
-    int py=(int)Math.Round((r.Bottom-r.Top)*453.5/510.0);
+    int py=(int)Math.Round((r.Bottom-r.Top)*408.0/470.0);
     int lp=((py&65535)<<16)|(px&65535);
     PostMessageW(hwnd,0x201,new IntPtr(1),new IntPtr(lp));
     PostMessageW(hwnd,0x202,IntPtr.Zero,new IntPtr(lp));
@@ -71,7 +71,7 @@ try {
   $emptyBuffer=[System.Text.StringBuilder]::new(1024)
   [NativeUiTest]::GetText($emptyEdit,0xD,[IntPtr]1024,$emptyBuffer)|Out-Null
   if($emptyBuffer.Length -ne 0){throw "Default path not empty: $emptyBuffer"}
-  foreach($id in @(105,106,107,108)){
+  foreach($id in @(105,106,107,108,109)){
     $child=[NativeUiTest]::GetDlgItem($emptyHwnd,$id)
     if($child -eq [IntPtr]::Zero){throw "Native child control $id missing"}
     if([NativeUiTest]::IsWindowEnabled($child)){throw "Control $id enabled before folder load"}
@@ -119,65 +119,117 @@ try {
   [NativeUiTest]::GetText($edit,0xD,[IntPtr]1024,$buffer)|Out-Null
   if([string]$buffer -ne $path){throw "Path mismatch: $buffer expected $path"}
   Write-Host '[PASS] --path initializes selected folder'
-  [NativeUiTest]::ClickChild($hwnd,107) # select System +S; no FS modification yet
-  [NativeUiTest]::ClickChild($hwnd,108) # select Hidden +H
-  Start-Sleep -Milliseconds 250
-  $attrs=[IO.File]::GetAttributes($path)
-  if(($attrs -band ([IO.FileAttributes]::Hidden -bor [IO.FileAttributes]::System)) -ne 0){
-    throw 'Options modified NTFS before Apply was clicked'
+  function Accept-Confirm {
+    $confirm=[IntPtr]::Zero
+    for($i=0;$i -lt 40;$i++){
+      Start-Sleep -Milliseconds 150
+      $confirm=[NativeUiTest]::FindWindowW('#32770','权限变更确认')
+      if($confirm -ne [IntPtr]::Zero){break}
+    }
+    if($confirm -eq [IntPtr]::Zero){throw 'Permission confirmation popup missing'}
+    [NativeUiTest]::PostMessageW([NativeUiTest]::GetDlgItem($confirm,6),0xF5,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
   }
-  Write-Host '[PASS] options are staged until Apply'
+  function Assert-ACL([bool]$expected) {
+    for($i=0;$i -lt 70;$i++){
+      Start-Sleep -Milliseconds 150
+      if((Get-Acl -LiteralPath $path).AreAccessRulesProtected -eq $expected){return}
+    }
+    throw "ACL protected expected=$expected"
+  }
+  function Has-Deny {
+    $sid='S-1-5-11'
+    $required=[int][System.Security.AccessControl.FileSystemRights]::Delete -bor
+              [int][System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles
+    foreach($rule in (Get-Acl -LiteralPath $path).Access) {
+      $rid=$rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+      if($rid -eq $sid -and
+         $rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny -and
+         !$rule.IsInherited -and
+         (([int]$rule.FileSystemRights -band $required) -eq $required)) {return $true}
+    }
+    return $false
+  }
+  function Assert-Deny([bool]$expected) {
+    for($i=0;$i -lt 70;$i++){
+      Start-Sleep -Milliseconds 150
+      if((Has-Deny) -eq $expected){return}
+    }
+    throw "Delete-deny ACE expected=$expected actual=$(Has-Deny)"
+  }
+  function Assert-Checked([int]$id,[bool]$expected) {
+    $ctrl=[NativeUiTest]::GetDlgItem($hwnd,$id)
+    $actual=[NativeUiTest]::SendMessageW($ctrl,0xF0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32() -eq 1
+    if($actual -ne $expected){throw "Checkbox $id state expected=$expected actual=$actual"}
+  }
+  foreach($id in @(106,107,108,109)){Assert-Checked $id $false}
+
+  # 1: independently stage and apply deletion denial, no implicit ACL or System.
+  [NativeUiTest]::ClickChild($hwnd,109)
+  if(Has-Deny){throw 'Deny ACE changed before Apply'}
   [NativeUiTest]::ClickApply($hwnd)
-  Assert-Flag ([IO.FileAttributes]::System) $true
+  Accept-Confirm
+  Assert-Deny $true; Assert-ACL $false
+  Assert-Flag ([IO.FileAttributes]::System) $false
+  Assert-Flag ([IO.FileAttributes]::Hidden) $false
+  Dismiss-Result
+  Assert-Checked 109 $true; Assert-Checked 106 $false
+  Write-Host '[PASS] standalone delete-deny switch sets only explicit deny ACE'
+
+  # 2: System and Hidden are independent in real NTFS (not GUI-only fake state).
+  [NativeUiTest]::ClickChild($hwnd,108)
+  [NativeUiTest]::ClickApply($hwnd)
   Assert-Flag ([IO.FileAttributes]::Hidden) $true
   Dismiss-Result
-  Write-Host '[PASS] consolidated Apply sets +S and +H and reports result'
-  [NativeUiTest]::ClickChild($hwnd,105) # refresh status: must re-adopt real flags
-  Start-Sleep -Milliseconds 250
+  Assert-Deny $true; Assert-Flag ([IO.FileAttributes]::System) $false
+  [NativeUiTest]::ClickChild($hwnd,107)
+  [NativeUiTest]::ClickApply($hwnd)
+  Assert-Flag ([IO.FileAttributes]::System) $true
+  Dismiss-Result
+  Assert-Checked 107 $true; Assert-Checked 108 $true
+  Write-Host '[PASS] System +S and Hidden +H independently persisted'
+
+  # 3: ACL inheritance switch is independent and preserves denial + attributes.
+  [NativeUiTest]::ClickChild($hwnd,106)
+  [NativeUiTest]::ClickApply($hwnd)
+  Accept-Confirm
+  Assert-ACL $true
+  Dismiss-Result
+  Assert-Deny $true
+  Assert-Flag ([IO.FileAttributes]::System) $true
+  Assert-Flag ([IO.FileAttributes]::Hidden) $true
+  [NativeUiTest]::ClickChild($hwnd,106)
+  [NativeUiTest]::ClickApply($hwnd)
+  Accept-Confirm
+  Assert-ACL $false
+  Dismiss-Result
+  Assert-Deny $true
+  Write-Host '[PASS] ACL toggle does not affect delete ACE or attributes'
+
+  # 4: delete-deny can be switched off without resetting remaining settings.
+  [NativeUiTest]::ClickChild($hwnd,109)
+  [NativeUiTest]::ClickApply($hwnd)
+  Accept-Confirm
+  Assert-Deny $false
+  Dismiss-Result
+  Assert-Flag ([IO.FileAttributes]::System) $true
+  Assert-Flag ([IO.FileAttributes]::Hidden) $true
+  Assert-Checked 109 $false
+  Write-Host '[PASS] delete-deny OFF preserves attributes and ACL inheritance'
+
+  # 5: disable two attribute flags, refresh and verify controls match disk.
   [NativeUiTest]::ClickChild($hwnd,107)
   [NativeUiTest]::ClickChild($hwnd,108)
   [NativeUiTest]::ClickApply($hwnd)
   Assert-Flag ([IO.FileAttributes]::System) $false
   Assert-Flag ([IO.FileAttributes]::Hidden) $false
   Dismiss-Result
-  Write-Host '[PASS] refresh synchronizes staged toggles, Apply removes +S and +H'
-  # Exercise the quick ACL switch through the single red Apply button.
-  function Accept-Confirm {
-    $confirm=[IntPtr]::Zero
-    for($i=0;$i -lt 35;$i++){
-      Start-Sleep -Milliseconds 150
-      $confirm=[NativeUiTest]::FindWindowW('#32770','权限变更确认')
-      if($confirm -ne [IntPtr]::Zero){break}
-    }
-    if($confirm -eq [IntPtr]::Zero){throw 'Permission confirmation popup missing'}
-    $yes=[NativeUiTest]::GetDlgItem($confirm,6)
-    if($yes -eq [IntPtr]::Zero){throw 'Confirm YES button missing'}
-    [NativeUiTest]::PostMessageW($yes,0xF5,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
-  }
-  function Assert-RootProtected([bool]$expected) {
-    for($i=0;$i -lt 60;$i++){
-      Start-Sleep -Milliseconds 150
-      $isProtected=(Get-Acl -LiteralPath $path).AreAccessRulesProtected
-      if($isProtected -eq $expected){return}
-    }
-    throw "ACL protected expected=$expected actual=$((Get-Acl -LiteralPath $path).AreAccessRulesProtected)"
-  }
-  [NativeUiTest]::ClickChild($hwnd,106) # ACL on, +S automatically staged
-  [NativeUiTest]::ClickApply($hwnd)
-  Accept-Confirm
-  Assert-RootProtected $true
-  Dismiss-Result
-  Assert-Flag ([IO.FileAttributes]::System) $true
-  Write-Host '[PASS] quick ACL lock applied through GUI with automatic +S'
-  [NativeUiTest]::ClickChild($hwnd,106) # ACL off
-  [NativeUiTest]::ClickChild($hwnd,107) # +S off
-  [NativeUiTest]::ClickApply($hwnd)
-  Accept-Confirm
-  Assert-RootProtected $false
-  Assert-Flag ([IO.FileAttributes]::System) $false
-  Dismiss-Result
-  Write-Host '[PASS] quick ACL unlock applied through GUI and actual state refreshed'
+  [NativeUiTest]::ClickChild($hwnd,105)
+  Start-Sleep -Milliseconds 250
+  foreach($id in @(106,107,108,109)){Assert-Checked $id $false}
+  if(!(Test-Path -LiteralPath $path)){throw 'Protected directory was removed unexpectedly'}
+  Write-Host '[PASS] all four independent switches round-trip and refresh from real NTFS'
   Write-Host '[PASS] compact GUI interaction smoke'
+
 }finally{
   if($process -and !$process.HasExited){Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue}
   if(Test-Path -LiteralPath $path){
