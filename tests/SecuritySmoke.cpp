@@ -36,6 +36,66 @@ int wmain(){
    b=security::Apply(root,security::Action::HiddenOff);
    s=security::ReadStatus(root);
    Check(a.ok && b.ok && !s.system && !s.hidden,L"Clear -S -H");
+   // CI uses real NTFS APIs on a disposable folder, never a mocked ACL.
+   // Four GUI options must be independent (all off initially).
+   auto init=security::ReadStatus(root);
+   Check(!init.system && !init.hidden && !init.aclProtected && !init.denyDelete,
+         L"Independent toggles: initial four flags off");
+   a=security::Apply(root,security::Action::AclProtectOn);
+   s=security::ReadStatus(root);
+   Check(a.ok && s.aclProtected && !s.denyDelete && !s.system && !s.hidden,
+         L"ACL only ON: protect inheritance without auto-deny or +S");
+   a=security::Apply(root,security::Action::AclProtectOff);
+   s=security::ReadStatus(root);
+   Check(a.ok && !s.aclProtected && !s.denyDelete,
+         L"ACL only OFF: restore inheritance without DACL reset");
+
+   a=security::Apply(root,security::Action::DenyDeleteOn);
+   s=security::ReadStatus(root);
+   Check(a.ok && s.denyDelete && !s.aclProtected && !s.system && !s.hidden,
+         L"Delete-deny only ON: add explicit rule while keeping inheritance");
+   // Attempt real DELETE access on target directory. Note: parent DELETE_CHILD
+   // can separately authorize deletion, so we test target DELETE access only.
+   HANDLE removal=CreateFileW(root.c_str(),DELETE,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+       nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS,nullptr);
+   bool blocked=(removal==INVALID_HANDLE_VALUE && GetLastError()==ERROR_ACCESS_DENIED);
+   if(removal!=INVALID_HANDLE_VALUE)CloseHandle(removal);
+   Check(blocked,L"NTFS rejects direct DELETE handle after deny-only ON");
+
+   a=security::Apply(root,security::Action::DenyDeleteOff);
+   s=security::ReadStatus(root);
+   Check(a.ok && !s.denyDelete && !s.aclProtected,
+         L"Delete-deny only OFF: inheritance and other ACEs retained");
+
+   a=security::Apply(root,security::Action::DenyDeleteOn);
+   b=security::Apply(root,security::Action::AclProtectOn);
+   s=security::ReadStatus(root);
+   Check(a.ok && b.ok && s.aclProtected && s.denyDelete,
+         L"Combined ACL + deny controls work independently");
+   a=security::Apply(root,security::Action::AclProtectOff);
+   s=security::ReadStatus(root);
+   Check(a.ok && !s.aclProtected && s.denyDelete,
+         L"Disabling ACL protection preserves delete-deny ACE");
+   a=security::Apply(root,security::Action::SystemOn);
+   b=security::Apply(root,security::Action::HiddenOn);
+   s=security::ReadStatus(root);
+   Check(a.ok && b.ok && s.system && s.hidden && s.denyDelete && !s.aclProtected,
+         L"+S and +H independently coexist with delete-deny");
+   a=security::Apply(root,security::Action::DenyDeleteOff);
+   s=security::ReadStatus(root);
+   Check(a.ok && !s.denyDelete && s.system && s.hidden,
+         L"Disabling delete-deny does not clear System or Hidden");
+   a=security::Apply(root,security::Action::SystemOff);
+   s=security::ReadStatus(root);
+   Check(a.ok && !s.system && s.hidden,
+         L"System OFF preserves Hidden");
+   a=security::Apply(root,security::Action::HiddenOff);
+   s=security::ReadStatus(root);
+   Check(a.ok && !s.hidden && !s.system && !s.aclProtected && !s.denyDelete,
+         L"Hidden OFF restores all four independent controls");
+   Check(GetFileAttributesW(file.c_str())!=INVALID_FILE_ATTRIBUTES,
+         L"Nested user data survived all four independent toggle cycles");
+
    a=security::Apply(root,security::Action::QuickLock);
    s=security::ReadStatus(root);
    Check(a.ok && s.aclProtected && s.denyDelete && s.system,L"Quick lock: ACL protected, deny delete, +S");
