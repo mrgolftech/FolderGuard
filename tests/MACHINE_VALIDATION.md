@@ -18,13 +18,13 @@
    FolderGuardSmoke.exe
    ```
    所有测试使用系统 TEMP 下独立临时目录，确认输出 `RESULT pass=... fail=0 skip=0`。
-4. 启动 `FolderGuard.exe`，在空的手工测试目录上操作。依次独立开启/关闭：ACL 继承保护、禁止删除、系统属性 +S、隐藏属性 +H。每次点击“应用设置”后刷新，核对四项指示与对应原生复选框是否和实际状态一致。
+4. ACL 加锁会替换顶层 DACL，解锁会重置原有自定义 ACE；仅对**临时空目录**测试，不得直接在重要目录上执行。\n5. 启动 `FolderGuard.exe`，在空的手工测试目录上操作。依次独立开启/关闭：ACL 访问保护、禁止删除、系统属性 +S、隐藏属性 +H。每次点击“应用设置”后刷新，核对四项指示与对应原生复选框是否和实际状态一致。
 5. 使用管理员 CMD 对测试目录做只读核验（不要删除）：
    ```cmd
    icacls "C:\\FolderGuardTest"
    attrib "C:\\FolderGuardTest"
    ```
-   ACL 保护时应显示 DACL 继承受保护；禁止删除时检查目标目录独立的 Authenticated Users 拒绝 ACE；+S/+H 对应 `S` 和 `H`。
+   ACL 保护时应显示 DACL 继承受保护，且显式允许 ACE 仅保留 Administrators/SYSTEM；禁止删除时检查目标目录独立的 Authenticated Users 拒绝 ACE；+S/+H 对应 `S` 和 `H`。
 6. 建议在 Windows 7 32 位 100%、125% DPI 及 1024×768 分辨率下检查文字和控件有无重叠。实机仍需人工确认 UAC 提示、文件夹选择器、中文输入法以及 4 个开关的交互。
 7. 每轮结束时恢复测试目录状态，确保四个开关全部为关闭。若验证失败，先保留路径与日志再用 `icacls` 确认权限；不要对系统目录执行任何测试。
 
