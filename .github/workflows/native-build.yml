@@ -24,7 +24,7 @@ jobs:
       - name: Build Release
         run: cmake --build build --config Release --parallel
       - name: Run NTFS security smoke tests
-        run: ctest --test-dir build -C Release --output-on-failure
+        run: ctest --test-dir build -C Release --verbose
       - name: Capture real GUI screenshot (best effort)
         if: matrix.platform == 'x64'
         shell: pwsh
