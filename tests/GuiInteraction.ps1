@@ -19,8 +19,8 @@ public static class NativeUiTest {
     int px=(int)Math.Round(x*(r.Right-r.Left)/1000.0);
     int py=(int)Math.Round(y*(r.Bottom-r.Top)/680.0);
     int lp=((py&65535)<<16)|(px&65535);
-    SendMessageW(hwnd,0x201,new IntPtr(1),new IntPtr(lp));
-    SendMessageW(hwnd,0x202,IntPtr.Zero,new IntPtr(lp));
+    PostMessageW(hwnd,0x201,new IntPtr(1),new IntPtr(lp));
+    PostMessageW(hwnd,0x202,IntPtr.Zero,new IntPtr(lp));
   }
 }
 '@
