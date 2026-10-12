@@ -82,7 +82,11 @@ try {
   }
   Write-Host '[PASS] empty initial folder; native refresh, settings and Apply disabled'
   if(-not [NativeUiTest]::SetWindowTextW($emptyEdit,$path)){throw 'Failed to populate path field'}
-  [NativeUiTest]::PostMessageW($emptyEdit,0x100,[IntPtr]13,[IntPtr]0)|Out-Null
+  $typed=[System.Text.StringBuilder]::new(1024)
+  [NativeUiTest]::GetText($emptyEdit,0xD,[IntPtr]1024,$typed)|Out-Null
+  if([string]$typed -ne $path){throw "Pasted path does not match: '$typed' vs '$path'"}
+  # Deliver Enter directly to the native edit window; not via old self-drawn hit zones.
+  [NativeUiTest]::SendMessageW($emptyEdit,0x100,[IntPtr]13,[IntPtr]0)|Out-Null
   $loaded=$false
   for($i=0;$i -lt 40;$i++){
     Start-Sleep -Milliseconds 100
