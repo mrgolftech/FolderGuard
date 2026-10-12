@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(FolderGuard VERSION 3.1.0 LANGUAGES CXX)
+project(FolderGuard VERSION 3.2.0 LANGUAGES CXX)
 if(NOT WIN32)
   message(FATAL_ERROR "FolderGuard is a Windows-only utility")
 endif()
