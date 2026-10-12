@@ -1,8 +1,8 @@
 #include <windows.h>
 1 RT_MANIFEST "FolderGuard.manifest"
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 3,2,0,0
- PRODUCTVERSION 3,2,0,0
+ FILEVERSION 3,3,0,0
+ PRODUCTVERSION 3,3,0,0
  FILEFLAGSMASK 0x3fL
  FILEOS 0x40004L
  FILETYPE VFT_APP
@@ -13,7 +13,7 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "FolderGuard Contributors\0"
       VALUE "FileDescription", "Native NTFS folder access manager\0"
-      VALUE "FileVersion", "3.2.0\0"
+      VALUE "FileVersion", "3.3.0\0"
       VALUE "ProductName", "FolderGuard\0"
     END
   END
