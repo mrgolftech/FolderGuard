@@ -1,5 +1,15 @@
 # FolderGuard
 
+## Native GUI v3.0 — C++ + Win32 + Direct2D
+
+**现在已新增 Windows 原生 GUI 工程**：目标 Windows 7 SP1 / Windows 10，绿色版 EXE，零 .NET/Qt/WebView 依赖。x86/x64 构建和使用说明见 [GUI v3.0 说明](README-GUI.md)，设计见 [原生 GUI 设计文档](docs/GUI_DESIGN.md)，构建状态见 [GitHub Actions](https://github.com/mrgolftech/FolderGuard/actions/workflows/native-build.yml)。
+
+> v3.0 尚需 Windows 7/10 实机功能验收；请在空测试目录测试。完整模式会重置子文件 ACL；防删除也可能被父目录 DELETE_CHILD 权限绕过。
+
+---
+
+## Legacy PowerShell v2.3
+
 Windows 10/11 文件夹隐藏与 NTFS ACL 访问控制工具（PowerShell 5.1）。
 
 > **注意：本工具不是加密软件，也不能保证阻止管理员或拥有父目录 `DELETE_CHILD` 权限的用户删除文件夹。** 首次使用请务必在空测试目录验证。
