@@ -6,11 +6,12 @@
 
 ## What this version implements
 
-- Custom dark interface drawn with Direct2D; native path edit control and Vista+/Win7 folder picker.
+- Custom light interface drawn with Direct2D; native path edit control and Vista+/Win7 folder picker.
 - Fast and full root ACL lock/unlock, explicit non-inherited delete-deny ACE, auto `+S` on lock.
 - Independently toggle `System (+S)` and `Hidden (+H)` attributes.
+- Read-only **ACL details** window: owner, inherited/explicit ACEs, access masks, DENY/ALLOW, and copy report.
 - NTFS checks, restricted paths, recursive reparse-point scan before full lock.
-- Elevated process via embedded UAC manifest; background worker thread for lengthy permission updates.
+- Elevated process via embedded `requireAdministrator` UAC manifest (permission prompt at every start); background worker thread for lengthy permission updates.
 - Compiled **x86 and x64 EXE** from Visual Studio 2022 GitHub Actions; `/MT` static VC runtime, no .NET or third-party runtime.
 
 ## How to run
@@ -19,7 +20,7 @@
 2. Extract and launch `FolderGuard.exe` with administrator approval.
 3. Choose or enter a **user-created folder** on an NTFS disk; start with an empty test directory such as `E:\FolderGuard-Test`.
 4. Select Quick Lock / Quick Unlock, or Full Lock / Full Unlock for recursive ACL changes. `+S` is applied automatically when locking; `+H` is independently toggled.
-5. Check the status panel for root inheritance and delete-deny indicator.
+5. Check the status panel for root inheritance and delete-deny indicator. Use **ACL 明细** to inspect and copy individual ACEs.
 
 **Important:** The program does not prevent deletion in all ACL arrangements. Parent `DELETE_CHILD` may permit deletion despite target deny, and administrators can change DACLs. Fast lock does not protect child files with permissive ACLs. No encryption is performed. Full unlock resets ACLs and can destroy custom permissions. Never test deletion on important files.
 
@@ -39,4 +40,4 @@ See [native implementation design](docs/GUI_DESIGN.md) and the [legacy PowerShel
 
 ## Current verification status
 
-Source is committed for Windows CI compilation. Windows 7 physical/VM runtime acceptance tests have **not** been completed. Check GitHub Actions status before using an artifact; first test on disposable data only.
+CI includes NTFS backend smoke tests, a real-window GUI mouse-interaction smoke test, and screenshot capture on a Windows Server 2022 runner.  Windows 7 physical/VM runtime acceptance tests have **not** been completed. Check GitHub Actions status before using an artifact; first test on disposable data only.
