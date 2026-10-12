@@ -1,10 +1,10 @@
 # FolderGuard
 
-## Native GUI v3.3 — C++ + Win32 + Direct2D
+## Native GUI v0.0.1 — C++ + Win32 + Direct2D
 
-**现在已新增 Windows 原生 GUI 工程**：目标 Windows 7 SP1 / Windows 10，绿色版 EXE，零 .NET/Qt/WebView 依赖。x86/x64 构建和使用说明见 [GUI v3.3 说明](README-GUI.md)，设计见 [原生 GUI 设计文档](docs/GUI_DESIGN.md)，构建状态见 [GitHub Actions](https://github.com/mrgolftech/FolderGuard/actions/workflows/native-build.yml)。
+**现在已新增 Windows 原生 GUI 工程**：目标 Windows 7 SP1 / Windows 10，绿色版 EXE，零 .NET/Qt/WebView 依赖。x86/x64 构建和使用说明见 [GUI v0.0.1 说明](README-GUI.md)，设计见 [原生 GUI 设计文档](docs/GUI_DESIGN.md)，构建状态见 [GitHub Actions](https://github.com/mrgolftech/FolderGuard/actions/workflows/native-build.yml)。
 
-> v3.3 尚需 Windows 7/10 实机功能验收；请在空测试目录测试。完整模式会重置子文件 ACL；防删除也可能被父目录 DELETE_CHILD 权限绕过。
+> v0.0.1 尚需 Windows 7/10 实机功能验收；请在空测试目录测试。完整模式会重置子文件 ACL；防删除也可能被父目录 DELETE_CHILD 权限绕过。
 
 ---
 
