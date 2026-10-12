@@ -39,6 +39,11 @@ int wmain(){
    a=security::Apply(root,security::Action::QuickLock);
    s=security::ReadStatus(root);
    Check(a.ok && s.aclProtected && s.denyDelete && s.system,L"Quick lock: ACL protected, deny delete, +S");
+   auto aclReport=security::DescribeAcl(root);
+   Check(aclReport.find(L"DACL ACE")!=std::wstring::npos &&
+         aclReport.find(L"DENY")!=std::wstring::npos &&
+         aclReport.find(L"DELETE")!=std::wstring::npos,
+         L"ACL detail report includes ACE, DENY and DELETE rights");
    b=security::Apply(root,security::Action::QuickUnlock);
    s=security::ReadStatus(root);
    Check(b.ok && !s.aclProtected && !s.denyDelete && s.system,L"Quick unlock: root inheritance restored, +S retained");
