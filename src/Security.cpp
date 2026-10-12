@@ -135,6 +135,86 @@ Result LockRoot(const std::wstring& path, bool inheritedAllow) {
     if (e != ERROR_SUCCESS) return {false, L"写入目标 ACL 失败：" + ErrorText(e)};
     return {true, L"顶层 ACL 已设置。"};
 }
+// Independent GUI ACL operations: preserve the existing DACL and custom ACEs.
+// This changes only the inheritance/protection flag; unlike QuickUnlock it never resets ACLs.
+Result ToggleAclInheritance(const std::wstring& p, bool protect) {
+    PSECURITY_DESCRIPTOR sd=nullptr;
+    PACL dacl=nullptr;
+    DWORD err=GetNamedSecurityInfoW(const_cast<LPWSTR>(p.c_str()), SE_FILE_OBJECT,
+                                    DACL_SECURITY_INFORMATION,nullptr,nullptr,&dacl,nullptr,&sd);
+    if(err!=ERROR_SUCCESS)return {false,L"读取现有 DACL 失败：" + ErrorText(err)};
+    const auto flags=DACL_SECURITY_INFORMATION |
+        (protect?PROTECTED_DACL_SECURITY_INFORMATION:UNPROTECTED_DACL_SECURITY_INFORMATION);
+    err=SetNamedSecurityInfoW(const_cast<LPWSTR>(p.c_str()),SE_FILE_OBJECT,
+                              flags,nullptr,nullptr,dacl,nullptr);
+    LocalFree(sd);
+    return err==ERROR_SUCCESS?Result{true,protect?L"已关闭 ACL 继承。":L"已启用 ACL 继承。"}:
+        Result{false,L"更新 ACL 继承失败：" + ErrorText(err)};
+}
+
+// FolderGuard owns only a non-inheriting, exact DELETE | DELETE_CHILD deny ACE.
+// A different/broader pre-existing deny ACE is never removed by this toggle.
+bool IsDeleteAce(const void* ace,PSID auth,bool exact) {
+    const auto* head=static_cast<const ACE_HEADER*>(ace);
+    if(head->AceType!=ACCESS_DENIED_ACE_TYPE ||
+       (head->AceFlags & (INHERITED_ACE|INHERIT_ONLY_ACE)))return false;
+    const auto* denied=static_cast<const ACCESS_DENIED_ACE*>(ace);
+    if(!EqualSid(const_cast<PSID>(static_cast<const void*>(&denied->SidStart)),auth))return false;
+    constexpr DWORD rights=DELETE|FILE_DELETE_CHILD;
+    return exact?(denied->Mask==rights && (head->AceFlags &
+        (CONTAINER_INHERIT_ACE|OBJECT_INHERIT_ACE))==0):
+        (denied->Mask & rights)==rights;
+}
+
+Result ToggleDeleteAce(const std::wstring& p,bool enable) {
+    std::vector<BYTE> auth;
+    if(!MakeSid(WinAuthenticatedUserSid,auth))return {false,L"无法创建 Authenticated Users SID。"};
+    PSECURITY_DESCRIPTOR sd=nullptr;
+    PACL old=nullptr;
+    DWORD err=GetNamedSecurityInfoW(const_cast<LPWSTR>(p.c_str()),SE_FILE_OBJECT,
+                                    DACL_SECURITY_INFORMATION,nullptr,nullptr,&old,nullptr,&sd);
+    if(err!=ERROR_SUCCESS)return {false,L"读取现有 DACL 失败："+ErrorText(err)};
+    if(!old){LocalFree(sd);return {false,L"目标目录 DACL 为空，已拒绝修改。"};}
+    bool hasExact=false,hasBroader=false;
+    for(DWORD i=0;i<old->AceCount;++i){
+        void* ace=nullptr;
+        if(!GetAce(old,i,&ace))continue;
+        hasExact |= IsDeleteAce(ace,auth.data(),true);
+        hasBroader |= IsDeleteAce(ace,auth.data(),false);
+    }
+    if(enable && hasBroader){LocalFree(sd);return {true,L"现有禁止删除 ACE 已生效，保持原样。"};}
+    if(!enable && !hasExact){
+        LocalFree(sd);
+        return hasBroader?Result{false,L"存在非本工具格式的禁止删除 ACE；为防止误删其他权限，拒绝清除。"}:
+            Result{true,L"没有本工具的禁止删除 ACE，无须变更。"};
+    }
+    const DWORD sidBytes=GetLengthSid(auth.data());
+    const DWORD newAceBytes=sizeof(ACCESS_DENIED_ACE)-sizeof(DWORD)+sidBytes;
+    const DWORD newSize=old->AclSize+(enable?newAceBytes:0);
+    std::vector<BYTE> memory(newSize);
+    auto* replacement=reinterpret_cast<PACL>(memory.data());
+    if(!InitializeAcl(replacement,newSize,ACL_REVISION)){LocalFree(sd);return {false,L"初始化 DACL 失败。"};}
+    if(enable && !AddAccessDeniedAceEx(replacement,ACL_REVISION,NO_INHERITANCE,
+                                      DELETE|FILE_DELETE_CHILD,auth.data())){
+        LocalFree(sd);return {false,L"添加拒绝删除 ACE 失败。"};
+    }
+    for(DWORD i=0;i<old->AceCount;++i){
+        void* ace=nullptr;
+        if(!GetAce(old,i,&ace)){LocalFree(sd);return {false,L"读取现有 ACE 失败。"};}
+        if(!enable && IsDeleteAce(ace,auth.data(),true))continue;
+        const auto* head=static_cast<const ACE_HEADER*>(ace);
+        if(!AddAce(replacement,ACL_REVISION,MAXDWORD,ace,head->AceSize)){
+            LocalFree(sd);return {false,L"保留原有 ACE 失败。"};
+        }
+    }
+    // Do not alter the inheritance protection bit or other account permissions.
+    err=SetNamedSecurityInfoW(const_cast<LPWSTR>(p.c_str()),SE_FILE_OBJECT,
+                              DACL_SECURITY_INFORMATION,nullptr,nullptr,replacement,nullptr);
+    LocalFree(sd);
+    return err==ERROR_SUCCESS?Result{true,enable?L"已添加独立禁止删除 ACE。":L"已移除独立禁止删除 ACE。"}:
+        Result{false,L"写入删除拒绝规则失败："+ErrorText(err)};
+}
+
 Result Attributes(const std::wstring& p, DWORD flag, bool enabled) {
     DWORD attr = GetFileAttributesW(p.c_str());
     if (attr == INVALID_FILE_ATTRIBUTES) return {false, L"读取属性失败：" + ErrorText(GetLastError())};
@@ -222,7 +302,7 @@ Status ReadStatus(const std::wstring& input) {
             ACE_HEADER* head = static_cast<ACE_HEADER*>(ace);
             if (head->AceType != ACCESS_DENIED_ACE_TYPE) continue;
             auto denied = static_cast<ACCESS_DENIED_ACE*>(ace);
-            if (EqualSid(&denied->SidStart, auth.data()) && (denied->Mask & DELETE)) s.denyDelete = true;
+            if (IsDeleteAce(ace, auth.data(), false)) s.denyDelete = true;
         }
     }
     LocalFree(descriptor);
@@ -313,6 +393,10 @@ Result Apply(const std::wstring& input, Action action) {
     if (!IsAdministrator()) return {false, L"请以管理员身份启动 FolderGuard。"};
     Result r;
     switch (action) {
+    case Action::AclProtectOn: return ToggleAclInheritance(p,true);
+    case Action::AclProtectOff: return ToggleAclInheritance(p,false);
+    case Action::DenyDeleteOn: return ToggleDeleteAce(p,true);
+    case Action::DenyDeleteOff: return ToggleDeleteAce(p,false);
     case Action::SystemOn: return Attributes(p, FILE_ATTRIBUTE_SYSTEM, true);
     case Action::SystemOff: return Attributes(p, FILE_ATTRIBUTE_SYSTEM, false);
     case Action::HiddenOn: return Attributes(p, FILE_ATTRIBUTE_HIDDEN, true);
