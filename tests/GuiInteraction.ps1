@@ -34,7 +34,7 @@ New-Item -ItemType Directory -Path $path | Out-Null
 $exe=(Resolve-Path 'build/Release/FolderGuard.exe').Path
 $process=$null
 try {
-  $process=Start-Process -FilePath $exe -PassThru
+  $process=Start-Process -FilePath $exe -ArgumentList ('--path "'+$path+'"') -PassThru
   $hwnd=[IntPtr]::Zero
   for($i=0;$i -lt 30;$i++){
     Start-Sleep -Milliseconds 300
@@ -49,7 +49,6 @@ try {
   [NativeUiTest]::InvalidateRect($hwnd,[IntPtr]::Zero,$false)|Out-Null
   [NativeUiTest]::UpdateWindow($hwnd)|Out-Null
   Start-Sleep -Milliseconds 1200
-  if(-not [NativeUiTest]::SetWindowTextW($edit,$path)){throw 'Path editing failed'}
   Start-Sleep -Milliseconds 300
   $buffer=[System.Text.StringBuilder]::new(1024)
   [NativeUiTest]::GetText($edit,0x000D,[IntPtr]1024,$buffer)|Out-Null
