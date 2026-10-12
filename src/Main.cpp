@@ -43,6 +43,79 @@ enum class ButtonId { Browse, Refresh, Open, AclDetails, QuickLock, QuickUnlock,
 struct Button { ButtonId id; Rect rect; };
 struct Outcome { security::Result result; unsigned long ms; };
 
+
+struct AclViewerState { HWND textBox{}; HWND copy{}; HWND close{}; HFONT font{}; std::wstring report; };
+LRESULT CALLBACK AclViewerProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    auto* state=reinterpret_cast<AclViewerState*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
+    if (msg==WM_NCCREATE) {
+        state=static_cast<AclViewerState*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);
+        SetWindowLongPtrW(hwnd,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(state));
+        return TRUE;
+    }
+    if (!state) return DefWindowProcW(hwnd,msg,wp,lp);
+    switch(msg) {
+    case WM_CREATE: {
+        state->font=CreateFontW(-17,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
+                              OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Consolas");
+        CreateWindowExW(0,L"STATIC",L"顶层目录权限报告 · 只读，支持复制",WS_CHILD|WS_VISIBLE,
+                        20,18,730,28,hwnd,nullptr,GetModuleHandleW(nullptr),nullptr);
+        state->textBox=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",state->report.c_str(),
+           WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|ES_NOHIDESEL,
+           20,56,800,430,hwnd,reinterpret_cast<HMENU>(901),GetModuleHandleW(nullptr),nullptr);
+        if(state->font) SendMessageW(state->textBox,WM_SETFONT,reinterpret_cast<WPARAM>(state->font),TRUE);
+        state->copy=CreateWindowExW(0,L"BUTTON",L"复制报告",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
+                                    540,500,130,36,hwnd,reinterpret_cast<HMENU>(902),GetModuleHandleW(nullptr),nullptr);
+        state->close=CreateWindowExW(0,L"BUTTON",L"关闭",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
+                                     680,500,130,36,hwnd,reinterpret_cast<HMENU>(903),GetModuleHandleW(nullptr),nullptr);
+        return 0;
+    }
+    case WM_SIZE: {
+        int w=LOWORD(lp),h=HIWORD(lp);
+        if(state->textBox)MoveWindow(state->textBox,20,56,std::max(160,w-40),std::max(100,h-118),TRUE);
+        if(state->copy)MoveWindow(state->copy,std::max(20,w-284),h-50,125,32,TRUE);
+        if(state->close)MoveWindow(state->close,std::max(155,w-146),h-50,125,32,TRUE);
+        return 0;
+    }
+    case WM_COMMAND:
+        if(LOWORD(wp)==902) {
+            SendMessageW(state->textBox,EM_SETSEL,0,-1);
+            SendMessageW(state->textBox,WM_COPY,0,0);
+            SendMessageW(state->textBox,EM_SETSEL,0,0);
+        }
+        if(LOWORD(wp)==903)DestroyWindow(hwnd);
+        return 0;
+    case WM_CLOSE: DestroyWindow(hwnd); return 0;
+    case WM_DESTROY:
+        if(state->font)DeleteObject(state->font);
+        SetWindowLongPtrW(hwnd,GWLP_USERDATA,0);
+        delete state;
+        return 0;
+    }
+    return DefWindowProcW(hwnd,msg,wp,lp);
+}
+void OpenAclViewer(HWND owner,const std::wstring& report) {
+    constexpr wchar_t klass[]=L"FolderGuard.AclViewer";
+    static bool registered=false;
+    if(!registered) {
+        WNDCLASSEXW wc={sizeof(wc)};
+        wc.lpfnWndProc=AclViewerProc;
+        wc.hInstance=GetModuleHandleW(nullptr);
+        wc.hbrBackground=reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH));
+        wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);
+        wc.lpszClassName=klass;
+        if(!RegisterClassExW(&wc) && GetLastError()!=ERROR_CLASS_ALREADY_EXISTS) return;
+        registered=true;
+    }
+    auto* state=new AclViewerState{};
+    state->report=report;
+    RECT parent{};GetWindowRect(owner,&parent);
+    HWND window=CreateWindowExW(WS_EX_DLGMODALFRAME,klass,L"FolderGuard · 详细 ACL",
+      WS_OVERLAPPEDWINDOW|WS_VISIBLE,parent.left+80,parent.top+80,900,610,
+      owner,nullptr,GetModuleHandleW(nullptr),state);
+    if(!window) { delete state;return; }
+    ShowWindow(window,SW_SHOW);SetForegroundWindow(window);
+}
+
 class App {
 public:
     bool Init(HINSTANCE instance) {
@@ -281,7 +354,10 @@ private:
             if (!PostMessageW(notify, kDone, 0, reinterpret_cast<LPARAM>(out))) delete out;
         }).detach();
     }
-    void ShowAclReport();
+    void ShowAclReport() {
+        const auto report = security::DescribeAcl(EditPath());
+        OpenAclViewer(hwnd_, report);
+    }
     void Browse() {
         ComPtr<IFileOpenDialog> dlg;
         if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return;
