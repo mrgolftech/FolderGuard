@@ -1,28 +1,19 @@
 # FolderGuard
 
-## Native GUI v0.0.1 — C++ + Win32 + Direct2D
+## v0.0.1 发布版本
 
-**现在已新增 Windows 原生 GUI 工程**：目标 Windows 7 SP1 / Windows 10，绿色版 EXE，零 .NET/Qt/WebView 依赖。x86/x64 构建和使用说明见 [GUI v0.0.1 说明](README-GUI.md)，设计见 [原生 GUI 设计文档](docs/GUI_DESIGN.md)，构建状态见 [GitHub Actions](https://github.com/mrgolftech/FolderGuard/actions/workflows/native-build.yml)。
+- **[GUI 版](README-GUI.md)**：C++17 + Win32 + Direct2D，绿色版 `FolderGuard.exe`，分别提供 Windows x86 和 x64 构建。GUI 使用 ACL 权限保护、禁止删除、系统属性 +S、隐藏属性 +H 四项独立开关。
+- **[命令行版](README-CLI.md)**：Windows PowerShell 5.1 中文交互菜单，包含 `FolderGuard.ps1` 与 `Start-FolderGuard.cmd`，无需编译。命令行脚本沿用历史 v2.3 操作语义，**不等同于 GUI 四项独立开关**。
+- **[查看 v0.0.1 GitHub Release 下载](https://github.com/mrgolftech/FolderGuard/releases/tag/v0.0.1)**：提供 GUI x86、GUI x64、CLI PowerShell 三个 ZIP 包及 SHA-256 校验文件。
+- **[版本发布说明](RELEASE_NOTES-v0.0.1.md)** · [GUI 设计说明](docs/GUI_DESIGN.md) · [Windows 验收指南](tests/MACHINE_VALIDATION.md)
 
-> v0.0.1 尚需 Windows 7/10 实机功能验收；请在空测试目录测试。完整模式会重置子文件 ACL；防删除也可能被父目录 DELETE_CHILD 权限绕过。
+> 目标 Windows 7 SP1 / Windows 10。GitHub Actions 已在 Windows Server 2022 虚拟机上验证原生 GUI 的 x86/x64 构建及真实 NTFS 状态，**不能视为 Windows 7 32 位实体机验收**。ACL 不是加密；禁止删除不能保证抵挡父目录 `DELETE_CHILD` 权限；请先在空测试目录验证。
 
 ---
 
-## Legacy PowerShell v2.3
+## 命令行版（PowerShell 5.1）详细说明
 
-Windows 10/11 文件夹隐藏与 NTFS ACL 访问控制工具（PowerShell 5.1）。
-
-> **注意：本工具不是加密软件，也不能保证阻止管理员或拥有父目录 `DELETE_CHILD` 权限的用户删除文件夹。** 首次使用请务必在空测试目录验证。
-
-## 当前 GUI 版本：FolderGuard v3.2
-
-原生 C++ + Win32 + Direct2D 浅色单页 GUI，目标兼容 Windows 7 SP1 与 Windows 10。提供紧凑界面、默认空目录、实际 ACL/属性状态同步、快速 ACL 及 +S/+H 统一应用。
-
-- [GUI 版本使用说明](README-GUI.md)
-- [v3.2 GUI 设计与测试](docs/GUI_V3_2_DESIGN.md)
-- [Windows x86/x64 构建下载](https://github.com/mrgolftech/FolderGuard/actions/workflows/native-build.yml)
-
-> 下面是继续保留的 PowerShell v2.3 命令行版本说明。
+适用 Windows 10/11；Windows 7 SP1 需要先安装 Windows PowerShell 5.1，且兼容性仍待验证。
 
 ## 功能
 
