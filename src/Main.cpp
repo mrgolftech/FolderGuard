@@ -1,7 +1,7 @@
 #include <windows.h>
 #include <windowsx.h>
-#include <shobjidl.h>
 #include <shellapi.h>
+#include <shobjidl.h>
 #include <d2d1.h>
 #include <d2d1helper.h>
 #include <dwrite.h>
@@ -13,503 +13,459 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include <chrono>
 #include "Security.h"
 
-#pragma comment(lib, "d2d1.lib")
-#pragma comment(lib, "dwrite.lib")
-#pragma comment(lib, "ole32.lib")
-#pragma comment(lib, "comctl32.lib")
-#pragma comment(lib, "user32.lib")
-#pragma comment(lib, "gdi32.lib")
+#pragma comment(lib,"d2d1.lib")
+#pragma comment(lib,"dwrite.lib")
+#pragma comment(lib,"ole32.lib")
+#pragma comment(lib,"shell32.lib")
+#pragma comment(lib,"user32.lib")
+#pragma comment(lib,"gdi32.lib")
 
 using Microsoft::WRL::ComPtr;
 namespace {
-constexpr wchar_t kClass[] = L"FolderGuard.NativeDesktop";
-constexpr UINT kDone = WM_APP + 11;
-constexpr UINT kTick = 20;
-constexpr int kPathEditId = 103;
-
-D2D1_COLOR_F C(unsigned rgb, float alpha = 1.0f) {
-    return D2D1::ColorF(float((rgb >> 16) & 0xff) / 255.f,
-                         float((rgb >> 8) & 0xff) / 255.f,
-                         float(rgb & 0xff) / 255.f, alpha);
+constexpr wchar_t kClass[]=L"FolderGuard.NativeDesktop";
+constexpr wchar_t kGitHub[]=L"https://github.com/mrgolftech/FolderGuard";
+constexpr UINT kDone=WM_APP+11;
+constexpr UINT kPathId=103;
+constexpr float W=1000.f, H=680.f;
+D2D1_COLOR_F Color(unsigned rgb,float alpha=1.f){
+    return D2D1::ColorF(float((rgb>>16)&255)/255.f,float((rgb>>8)&255)/255.f,float(rgb&255)/255.f,alpha);
 }
-struct Rect { float x{}, y{}, w{}, h{};
-    D2D1_RECT_F box() const { return D2D1::RectF(x,y,x+w,y+h); }
-    bool contains(float mx, float my) const { return mx >= x && my >= y && mx <= x+w && my <= y+h; }
+struct Rect {
+    float x,y,w,h;
+    D2D1_RECT_F box()const{return D2D1::RectF(x,y,x+w,y+h);}
+    bool contains(float mx,float my)const{return mx>=x && mx<=x+w && my>=y && my<=y+h;}
 };
-enum class ButtonId { Browse, Refresh, Open, AclDetails, QuickLock, QuickUnlock, FullLock, FullUnlock, System, Hidden };
-struct Button { ButtonId id; Rect rect; };
-struct Outcome { security::Result result; unsigned long ms; };
-
-
-struct AclViewerState { HWND textBox{}; HWND copy{}; HWND close{}; HFONT font{}; std::wstring report; };
-LRESULT CALLBACK AclViewerProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    auto* state=reinterpret_cast<AclViewerState*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
-    if (msg==WM_NCCREATE) {
-        state=static_cast<AclViewerState*>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams);
-        SetWindowLongPtrW(hwnd,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(state));
-        return TRUE;
-    }
-    if (!state) return DefWindowProcW(hwnd,msg,wp,lp);
-    switch(msg) {
-    case WM_CREATE: {
-        state->font=CreateFontW(-17,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
-                              OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Consolas");
-        CreateWindowExW(0,L"STATIC",L"顶层目录权限报告 · 只读，支持复制",WS_CHILD|WS_VISIBLE,
-                        20,18,730,28,hwnd,nullptr,GetModuleHandleW(nullptr),nullptr);
-        state->textBox=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",state->report.c_str(),
-           WS_CHILD|WS_VISIBLE|WS_TABSTOP|WS_VSCROLL|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL|ES_NOHIDESEL,
-           20,56,800,430,hwnd,reinterpret_cast<HMENU>(901),GetModuleHandleW(nullptr),nullptr);
-        if(state->font) SendMessageW(state->textBox,WM_SETFONT,reinterpret_cast<WPARAM>(state->font),TRUE);
-        state->copy=CreateWindowExW(0,L"BUTTON",L"复制报告",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
-                                    540,500,130,36,hwnd,reinterpret_cast<HMENU>(902),GetModuleHandleW(nullptr),nullptr);
-        state->close=CreateWindowExW(0,L"BUTTON",L"关闭",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,
-                                     680,500,130,36,hwnd,reinterpret_cast<HMENU>(903),GetModuleHandleW(nullptr),nullptr);
-        return 0;
-    }
-    case WM_SIZE: {
-        int w=LOWORD(lp),h=HIWORD(lp);
-        if(state->textBox)MoveWindow(state->textBox,20,56,std::max(160,w-40),std::max(100,h-118),TRUE);
-        if(state->copy)MoveWindow(state->copy,std::max(20,w-284),h-50,125,32,TRUE);
-        if(state->close)MoveWindow(state->close,std::max(155,w-146),h-50,125,32,TRUE);
-        return 0;
-    }
-    case WM_COMMAND:
-        if(LOWORD(wp)==902) {
-            SendMessageW(state->textBox,EM_SETSEL,0,-1);
-            SendMessageW(state->textBox,WM_COPY,0,0);
-            SendMessageW(state->textBox,EM_SETSEL,0,0);
-        }
-        if(LOWORD(wp)==903)DestroyWindow(hwnd);
-        return 0;
-    case WM_CLOSE: DestroyWindow(hwnd); return 0;
-    case WM_DESTROY:
-        if(state->font)DeleteObject(state->font);
-        SetWindowLongPtrW(hwnd,GWLP_USERDATA,0);
-        delete state;
-        return 0;
-    }
-    return DefWindowProcW(hwnd,msg,wp,lp);
-}
-void OpenAclViewer(HWND owner,const std::wstring& report) {
-    constexpr wchar_t klass[]=L"FolderGuard.AclViewer";
-    static bool registered=false;
-    if(!registered) {
-        WNDCLASSEXW wc={sizeof(wc)};
-        wc.lpfnWndProc=AclViewerProc;
-        wc.hInstance=GetModuleHandleW(nullptr);
-        wc.hbrBackground=reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH));
-        wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);
-        wc.lpszClassName=klass;
-        if(!RegisterClassExW(&wc) && GetLastError()!=ERROR_CLASS_ALREADY_EXISTS) return;
-        registered=true;
-    }
-    auto* state=new AclViewerState{};
-    state->report=report;
-    RECT parent{};GetWindowRect(owner,&parent);
-    HWND window=CreateWindowExW(WS_EX_DLGMODALFRAME,klass,L"FolderGuard · 详细 ACL",
-      WS_OVERLAPPEDWINDOW|WS_VISIBLE,parent.left+80,parent.top+80,900,610,
-      owner,nullptr,GetModuleHandleW(nullptr),state);
-    if(!window) { delete state;return; }
-    ShowWindow(window,SW_SHOW);SetForegroundWindow(window);
-}
+enum class Control { Load, Browse, Refresh, Acl, System, Hidden, Apply, GitHub };
+struct Hit {Control id;Rect rect;bool enabled;};
+struct Outcome {
+    security::Result result;
+    security::Status after;
+    std::wstring actions;
+    DWORD elapsed=0;
+};
+std::wstring StateWord(bool v){return v?L"已开启":L"未开启";}
 
 class App {
 public:
-    bool Init(HINSTANCE instance, const std::wstring& initialPath) {
-        const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-        comInitialized_ = SUCCEEDED(co);
-        if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory_.GetAddressOf()))) return false;
-        if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
-             reinterpret_cast<IUnknown**>(write_.GetAddressOf())))) return false;
-        Format(formatHero_, 31, DWRITE_FONT_WEIGHT_BOLD);
-        Format(formatTitle_, 19, DWRITE_FONT_WEIGHT_SEMI_BOLD);
-        Format(formatBody_, 14, DWRITE_FONT_WEIGHT_NORMAL);
-        Format(formatBold_, 14, DWRITE_FONT_WEIGHT_SEMI_BOLD);
-        Format(formatSmall_, 12, DWRITE_FONT_WEIGHT_NORMAL);
-        Format(formatTiny_, 11, DWRITE_FONT_WEIGHT_NORMAL);
-        WNDCLASSEXW cls = {sizeof(cls)};
-        cls.hInstance = instance;
-        cls.lpfnWndProc = WindowProc;
-        cls.lpszClassName = kClass;
-        cls.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        cls.hIcon = LoadIconW(nullptr, IDI_SHIELD);
-        cls.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH));
-        if (!RegisterClassExW(&cls)) return false;
-        hwnd_ = CreateWindowExW(0, kClass, L"FolderGuard 3.1 — 文件保护工作台",
-                WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT,
-                1180, 835, nullptr, nullptr, instance, this);
-        if (!hwnd_) return false;
-        edit_ = CreateWindowExW(0, L"EDIT", initialPath.empty() ? L"E:\\FolderGuard-Test" : initialPath.c_str(),
-                WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-                0, 0, 100, 28, hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPathEditId)), instance, nullptr);
-        font_ = CreateFontW(-18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-        SendMessageW(edit_, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
+    bool Init(HINSTANCE inst,const std::wstring& initialPath) {
+        inst_=inst;
+        auto co=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
+        comInit_=SUCCEEDED(co);
+        if(FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,factory_.GetAddressOf())))return false;
+        if(FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,__uuidof(IDWriteFactory),
+           reinterpret_cast<IUnknown**>(dwrite_.GetAddressOf()))))return false;
+        MakeFormat(hero_,27,DWRITE_FONT_WEIGHT_BOLD);
+        MakeFormat(section_,17,DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        MakeFormat(body_,14,DWRITE_FONT_WEIGHT_NORMAL);
+        MakeFormat(bold_,14,DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        MakeFormat(small_,12,DWRITE_FONT_WEIGHT_NORMAL);
+        MakeFormat(tiny_,11,DWRITE_FONT_WEIGHT_NORMAL);
+        WNDCLASSEXW cls={sizeof(cls)};
+        cls.hInstance=inst;
+        cls.lpfnWndProc=&WndProc;
+        cls.lpszClassName=kClass;
+        cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);
+        cls.hIcon=LoadIconW(nullptr,IDI_SHIELD);
+        cls.hbrBackground=reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH));
+        if(!RegisterClassExW(&cls))return false;
+        hwnd_=CreateWindowExW(0,kClass,L"FolderGuard 3.2 — 文件夹保护",
+           WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1020,745,
+           nullptr,nullptr,inst,this);
+        if(!hwnd_)return false;
+        edit_=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",initialPath.c_str(),
+           WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
+           0,0,100,34,hwnd_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPathId)),inst,nullptr);
+        font_=CreateFontW(-18,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
+          OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
+        SendMessageW(edit_,WM_SETFONT,reinterpret_cast<WPARAM>(font_),TRUE);
+        editBrush_=CreateSolidBrush(RGB(248,250,253));
         LayoutEdit();
-        brushEdit_ = CreateSolidBrush(RGB(248,250,253));
-        ShowWindow(hwnd_, SW_SHOW);
+        ShowWindow(hwnd_,SW_SHOW);
         UpdateWindow(hwnd_);
-        Refresh();
+        if(!initialPath.empty())LoadSelected(false);
         return true;
     }
-    ~App() {
-        if (brushEdit_) DeleteObject(brushEdit_);
-        if (font_) DeleteObject(font_);
-        if (comInitialized_) CoUninitialize();
+    ~App(){
+        if(editBrush_)DeleteObject(editBrush_);
+        if(font_)DeleteObject(font_);
+        if(comInit_)CoUninitialize();
     }
-    int Run() {
-        MSG msg = {};
-        while (GetMessageW(&msg, nullptr, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessageW(&msg); }
-        return static_cast<int>(msg.wParam);
+    int Run(){
+        MSG msg{};
+        while(GetMessageW(&msg,nullptr,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}
+        return int(msg.wParam);
     }
 private:
-    HINSTANCE instance_{};
-    HWND hwnd_{};
-    HWND edit_{};
+    HINSTANCE inst_{};
+    HWND hwnd_{},edit_{};
     HFONT font_{};
-    HBRUSH brushEdit_{};
-    bool comInitialized_ = false;
-    bool busy_ = false;
-    unsigned long started_{};
-    float hoverX_ = -1, hoverY_ = -1;
+    HBRUSH editBrush_{};
+    bool comInit_=false,ready_=false,busy_=false,suppressChange_=false;
+    bool draftAcl_=false,draftSystem_=false,draftHidden_=false;
+    bool modified_=false,success_=true;
+    float mx_=-1.f,my_=-1.f;
+    std::wstring selected_,notice_=L"请选择或输入一个 NTFS 文件夹，然后点击“载入”。";
+    security::Status actual_{};
+    std::vector<Hit> hits_;
     ComPtr<ID2D1Factory> factory_;
-    ComPtr<IDWriteFactory> write_;
+    ComPtr<IDWriteFactory> dwrite_;
     ComPtr<ID2D1HwndRenderTarget> target_;
-    ComPtr<IDWriteTextFormat> formatHero_, formatTitle_, formatBody_, formatBold_, formatSmall_, formatTiny_;
-    std::vector<Button> buttons_;
-    std::wstring path_ = L"E:\\FolderGuard-Test";
-    std::wstring notice_ = L"请选择一个独立的 NTFS 数据目录，开始配置保护。";
-    bool success_ = true;
-    security::Status status_;
+    ComPtr<IDWriteTextFormat> hero_,section_,body_,bold_,small_,tiny_;
 
-    static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-        App* self = reinterpret_cast<App*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-        if (msg == WM_NCCREATE) {
-            auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
-            self = static_cast<App*>(cs->lpCreateParams);
-            self->hwnd_ = hwnd;
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
-        }
-        if (self) return self->Handle(msg, wp, lp);
-        return DefWindowProcW(hwnd, msg, wp, lp);
-    }
-    void Format(ComPtr<IDWriteTextFormat>& out, float size, DWRITE_FONT_WEIGHT weight) {
-        if (SUCCEEDED(write_->CreateTextFormat(L"Segoe UI", nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
-                   DWRITE_FONT_STRETCH_NORMAL, size, L"zh-CN", out.GetAddressOf()))) {
+    void MakeFormat(ComPtr<IDWriteTextFormat>& out,float size,DWRITE_FONT_WEIGHT weight){
+        if(SUCCEEDED(dwrite_->CreateTextFormat(L"Segoe UI",nullptr,weight,
+           DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,size,L"zh-CN",out.GetAddressOf()))){
             out->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
             out->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
     }
-    LRESULT Handle(UINT msg, WPARAM wp, LPARAM lp) {
-        switch (msg) {
-        case WM_GETMINMAXINFO: {
-            auto* mm = reinterpret_cast<MINMAXINFO*>(lp);
-            mm->ptMinTrackSize.x = 860;
-            mm->ptMinTrackSize.y = 640;
-            return 0;
+    static LRESULT CALLBACK WndProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
+        App* self=reinterpret_cast<App*>(GetWindowLongPtrW(hwnd,GWLP_USERDATA));
+        if(msg==WM_NCCREATE){
+            auto* cs=reinterpret_cast<CREATESTRUCTW*>(lp);
+            self=static_cast<App*>(cs->lpCreateParams);
+            self->hwnd_=hwnd;
+            SetWindowLongPtrW(hwnd,GWLP_USERDATA,reinterpret_cast<LONG_PTR>(self));
         }
-        case WM_SIZE: {
-            if (target_) target_->Resize(D2D1::SizeU(LOWORD(lp), HIWORD(lp)));
-            LayoutEdit();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            return 0;
+        return self?self->Handle(msg,wp,lp):DefWindowProcW(hwnd,msg,wp,lp);
+    }
+    LRESULT Handle(UINT msg,WPARAM wp,LPARAM lp){
+        switch(msg){
+        case WM_GETMINMAXINFO:{
+            auto* mm=reinterpret_cast<MINMAXINFO*>(lp);
+            mm->ptMinTrackSize.x=810; mm->ptMinTrackSize.y=610;return 0;
         }
-        case WM_MOUSEMOVE: {
-            TRACKMOUSEEVENT track = {sizeof(track), TME_LEAVE, hwnd_, 0};
-            TrackMouseEvent(&track);
-            RECT rc = {}; GetClientRect(hwnd_, &rc);
-            hoverX_ = static_cast<float>(GET_X_LPARAM(lp)) * 1180.f / std::max(1L,rc.right);
-            hoverY_ = static_cast<float>(GET_Y_LPARAM(lp)) * 820.f / std::max(1L,rc.bottom);
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            return 0;
+        case WM_SIZE:
+            if(target_)target_->Resize(D2D1::SizeU(LOWORD(lp),HIWORD(lp)));
+            LayoutEdit();InvalidateRect(hwnd_,nullptr,FALSE);return 0;
+        case WM_MOUSEMOVE:{
+            TRACKMOUSEEVENT t={sizeof(t),TME_LEAVE,hwnd_,0};TrackMouseEvent(&t);
+            RECT rc{};GetClientRect(hwnd_,&rc);
+            mx_=float(GET_X_LPARAM(lp))*W/std::max(1L,rc.right);
+            my_=float(GET_Y_LPARAM(lp))*H/std::max(1L,rc.bottom);
+            InvalidateRect(hwnd_,nullptr,FALSE);return 0;
         }
-        case WM_MOUSELEAVE:
-            hoverX_ = hoverY_ = -1;
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            return 0;
-        case WM_LBUTTONUP: {
-            RECT rc = {}; GetClientRect(hwnd_, &rc);
-            float mx = float(GET_X_LPARAM(lp)) * 1180.f / std::max(1L,rc.right);
-            float my = float(GET_Y_LPARAM(lp)) * 820.f / std::max(1L,rc.bottom);
-            if (!busy_) {
-                for (const auto& b : buttons_) if (b.rect.contains(mx,my)) { OnButton(b.id); break; }
+        case WM_MOUSELEAVE:mx_=my_=-1;InvalidateRect(hwnd_,nullptr,FALSE);return 0;
+        case WM_LBUTTONUP:{
+            RECT rc{};GetClientRect(hwnd_,&rc);
+            float x=float(GET_X_LPARAM(lp))*W/std::max(1L,rc.right);
+            float y=float(GET_Y_LPARAM(lp))*H/std::max(1L,rc.bottom);
+            if(!busy_)for(auto hit:hits_)if(hit.enabled && hit.rect.contains(x,y)){
+                Click(hit.id);break;
             }
             return 0;
         }
         case WM_COMMAND:
-            if (LOWORD(wp) == kPathEditId && HIWORD(wp) == EN_CHANGE && !busy_) {
-                // Read the path only on action/refresh, to avoid triggering a scan on every keystroke.
+            if(LOWORD(wp)==kPathId && HIWORD(wp)==EN_CHANGE && !suppressChange_ && !busy_){
+                ready_=false; selected_.clear();modified_=false;actual_=security::Status{};
+                draftAcl_=draftSystem_=draftHidden_=false;
+                notice_=L"路径已修改。请点击“载入目录”，再配置权限。";
+                InvalidateRect(hwnd_,nullptr,FALSE);
             }
             return 0;
-        case WM_CTLCOLOREDIT: {
-            auto dc = reinterpret_cast<HDC>(wp);
-            SetTextColor(dc, RGB(32,48,76));
-            SetBkColor(dc, RGB(248,250,253));
-            return reinterpret_cast<LRESULT>(brushEdit_);
+        case WM_CTLCOLOREDIT:{
+            auto dc=reinterpret_cast<HDC>(wp);
+            SetTextColor(dc,RGB(32,48,76));SetBkColor(dc,RGB(248,250,253));
+            return reinterpret_cast<LRESULT>(editBrush_);
         }
-        case WM_PAINT: {
-            PAINTSTRUCT ps;
-            BeginPaint(hwnd_, &ps);
-            Draw();
-            EndPaint(hwnd_, &ps);
-            return 0;
+        case WM_PAINT:{
+            PAINTSTRUCT ps{};BeginPaint(hwnd_,&ps);Draw();EndPaint(hwnd_,&ps);return 0;
         }
-        case WM_TIMER:
-            if (wp == kTick) InvalidateRect(hwnd_, nullptr, FALSE);
-            return 0;
-        case kDone: {
-            std::unique_ptr<Outcome> result(reinterpret_cast<Outcome*>(lp));
-            busy_ = false;
-            KillTimer(hwnd_, kTick);
-            EnableWindow(edit_, TRUE);
-            success_ = result->result.ok;
-            notice_ = (success_ ? L"操作完成 · " : L"操作失败 · ") + result->result.message +
-                      L"（" + std::to_wstring(result->ms) + L" ms）";
-            Refresh();
+        case kDone:{
+            std::unique_ptr<Outcome> out(reinterpret_cast<Outcome*>(lp));
+            busy_=false;EnableWindow(edit_,TRUE);
+            actual_=security::ReadStatus(selected_);
+            ready_=actual_.exists && actual_.ntfs && actual_.error.empty();
+            AdoptActual();
+            success_=out->result.ok;
+            notice_=success_?L"设置已完成，当前状态已从磁盘重新读取。":L"部分操作失败，请检查当前状态。";
+            InvalidateRect(hwnd_,nullptr,FALSE);
+            std::wstring report=(success_?L"应用完成":L"应用未完全成功");
+            report+=L"\r\n\r\n"+out->actions+L"\r\n";
+            report+=L"耗时："+std::to_wstring(out->elapsed)+L" 毫秒\r\n";
+            report+=L"执行结果："+out->result.message+L"\r\n\r\n";
+            report+=L"实际 ACL："+StateWord(actual_.aclProtected)+
+                    L"\r\n禁止删除规则："+StateWord(actual_.denyDelete)+
+                    L"\r\n系统属性 +S："+StateWord(actual_.system)+
+                    L"\r\n隐藏属性 +H："+StateWord(actual_.hidden);
+            if(!actual_.error.empty())report+=L"\r\n状态读取："+actual_.error;
+            MessageBoxW(hwnd_,report.c_str(),L"FolderGuard · 应用设置结果",
+                MB_OK|(success_?MB_ICONINFORMATION:MB_ICONWARNING));
             return 0;
         }
         case WM_CLOSE:
-            if (busy_) { MessageBoxW(hwnd_, L"权限处理尚未完成，请等待操作结束。", L"FolderGuard", MB_ICONINFORMATION); return 0; }
-            DestroyWindow(hwnd_);
-            return 0;
-        case WM_DESTROY:
-            target_.Reset();
-            PostQuitMessage(0);
-            return 0;
+            if(busy_){MessageBoxW(hwnd_,L"权限修改尚未结束，请在收到结果后关闭程序。",
+                       L"FolderGuard",MB_ICONINFORMATION);return 0;}
+            DestroyWindow(hwnd_);return 0;
+        case WM_DESTROY:target_.Reset();PostQuitMessage(0);return 0;
         }
-        return DefWindowProcW(hwnd_, msg, wp, lp);
+        return DefWindowProcW(hwnd_,msg,wp,lp);
     }
-    std::wstring EditPath() {
-        const int length = GetWindowTextLengthW(edit_);
-        std::vector<wchar_t> buffer(static_cast<size_t>(length) + 2);
-        GetWindowTextW(edit_, buffer.data(), static_cast<int>(buffer.size()));
-        return std::wstring(buffer.data());
+    void LayoutEdit(){
+        if(!edit_)return;
+        RECT rc{};GetClientRect(hwnd_,&rc);
+        float sx=float(rc.right)/W,sy=float(rc.bottom)/H;
+        MoveWindow(edit_,int(66*sx),int(175*sy),int(632*sx),int(37*sy),TRUE);
     }
-    void LayoutEdit() {
-        if (!edit_) return;
-        RECT rc = {}; GetClientRect(hwnd_, &rc);
-        const float sx = float(rc.right - rc.left) / 1180.f;
-        const float sy = float(rc.bottom - rc.top) / 820.f;
-        // Native EDIT control tracks the Direct2D virtual canvas.
-        MoveWindow(edit_, int(294*sx), int(203*sy), int(586*sx), int(31*sy), TRUE);
+    std::wstring EditPath()const{
+        int len=GetWindowTextLengthW(edit_);
+        std::vector<wchar_t> chars(static_cast<size_t>(len)+2);
+        GetWindowTextW(edit_,chars.data(),int(chars.size()));
+        return chars.data();
     }
-    void Refresh() {
-        if (!busy_) {
-            path_ = EditPath();
-            status_ = security::ReadStatus(path_);
-        }
-        InvalidateRect(hwnd_, nullptr, FALSE);
+    void SetPath(const std::wstring& p){
+        suppressChange_=true;SetWindowTextW(edit_,p.c_str());suppressChange_=false;
     }
-    void OnButton(ButtonId id) {
-        switch (id) {
-        case ButtonId::Browse: Browse(); return;
-        case ButtonId::Refresh: Refresh(); return;
-        case ButtonId::AclDetails: ShowAclReport(); return;
-        case ButtonId::Open: {
-            path_ = EditPath();
-            ShellExecuteW(hwnd_, L"open", path_.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-            return;
+    void AdoptActual(){
+        // All controls are synchronized to the real NTFS state after load, refresh, or completion.
+        draftAcl_=ready_ && actual_.aclProtected;
+        draftSystem_=ready_ && actual_.system;
+        draftHidden_=ready_ && actual_.hidden;
+        modified_=false;
+    }
+    void Refresh(){
+        if(!ready_)return;
+        actual_=security::ReadStatus(selected_);
+        ready_=actual_.exists && actual_.ntfs && actual_.error.empty();
+        AdoptActual();
+        success_=ready_;
+        notice_=ready_?L"已刷新：设置项与磁盘实际权限和属性保持一致。":
+             L"刷新失败："+actual_.error;
+        InvalidateRect(hwnd_,nullptr,FALSE);
+    }
+    void LoadSelected(bool prompt){
+        std::wstring path=EditPath();
+        if(path.empty()){notice_=L"请先选择文件夹。";ready_=false;InvalidateRect(hwnd_,nullptr,FALSE);return;}
+        auto checked=security::PrepareDirectory(path,false);
+        if(!checked.ok && prompt && checked.message==L"目录不存在。"){
+            if(MessageBoxW(hwnd_,L"目录不存在，是否创建新目录？",L"创建目标文件夹",
+                MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2)==IDYES)
+                checked=security::PrepareDirectory(path,true);
         }
-        default: break;
+        if(!checked.ok){
+            ready_=false;selected_.clear();actual_=security::Status{};
+            AdoptActual();success_=false;notice_=checked.message;
+            InvalidateRect(hwnd_,nullptr,FALSE);return;
         }
-        path_ = EditPath();
-        auto prepared = security::PrepareDirectory(path_, true);
-        if (!prepared.ok) { notice_ = prepared.message; success_ = false; Refresh(); return; }
-        // A new path may have been typed without pressing Refresh.
-        status_ = security::ReadStatus(path_);
-        security::Action action;
-        switch (id) {
-        case ButtonId::QuickLock: action = security::Action::QuickLock; break;
-        case ButtonId::QuickUnlock: action = security::Action::QuickUnlock; break;
-        case ButtonId::FullLock: action = security::Action::FullLock; break;
-        case ButtonId::FullUnlock: action = security::Action::FullUnlock; break;
-        case ButtonId::System: action = status_.system ? security::Action::SystemOff : security::Action::SystemOn; break;
-        case ButtonId::Hidden: action = status_.hidden ? security::Action::HiddenOff : security::Action::HiddenOn; break;
-        default: return;
+        selected_=path;
+        actual_=security::ReadStatus(selected_);
+        ready_=actual_.exists && actual_.ntfs && actual_.error.empty();
+        AdoptActual();
+        notice_=ready_?L"已载入文件夹。更改下方选项后，点击红色按钮应用设置。":
+            L"无法读取该目录状态："+actual_.error;
+        success_=ready_;
+        InvalidateRect(hwnd_,nullptr,FALSE);
+    }
+    void Browse(){
+        ComPtr<IFileOpenDialog> dlg;
+        if(FAILED(CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,
+                                     IID_PPV_ARGS(&dlg))))return;
+        DWORD options=0;dlg->GetOptions(&options);
+        dlg->SetOptions(options|FOS_PICKFOLDERS|FOS_FORCEFILESYSTEM);
+        dlg->SetTitle(L"选择要管理的 NTFS 数据目录");
+        if(FAILED(dlg->Show(hwnd_)))return;
+        ComPtr<IShellItem> item;
+        if(FAILED(dlg->GetResult(&item)))return;
+        PWSTR path=nullptr;
+        if(SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH,&path)) && path){
+            SetPath(path);CoTaskMemFree(path);LoadSelected(false);
         }
-        const bool full = action == security::Action::FullLock || action == security::Action::FullUnlock;
-        const bool lock = action == security::Action::QuickLock || action == security::Action::FullLock;
-        if (full) {
-            const wchar_t* warning = action == security::Action::FullLock
-                ? L"完整加锁将批量重置子项 ACL，原有自定义权限可能丢失。请先备份数据和 ACL。继续吗？"
-                : L"完整解锁将递归重置所有子文件 ACL，不会恢复原来的独立权限。继续吗？";
-            if (MessageBoxW(hwnd_, warning, L"高风险操作确认", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
-        } else if (lock && MessageBoxW(hwnd_, L"将限制目标目录访问并添加防删除规则，但父目录 DELETE_CHILD 可能仍允许删除。继续吗？",
-                                      L"权限修改确认", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
-        busy_ = true;
-        started_ = GetTickCount();
-        EnableWindow(edit_, FALSE);
-        notice_ = full ? L"正在批量处理子文件权限，请勿关闭程序…" : L"正在处理顶层目录权限…";
-        SetTimer(hwnd_, kTick, 60, nullptr);
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        const auto targetPath = path_;
-        const HWND notify = hwnd_;
-        std::thread([targetPath, action, notify]() {
-            DWORD start = GetTickCount();
-            auto res = security::Apply(targetPath, action);
-            auto *out = new Outcome{res, GetTickCount() - start};
-            if (!PostMessageW(notify, kDone, 0, reinterpret_cast<LPARAM>(out))) delete out;
+    }
+    void Click(Control id){
+        if(id==Control::GitHub){
+            ShellExecuteW(hwnd_,L"open",kGitHub,nullptr,nullptr,SW_SHOWNORMAL);return;
+        }
+        if(id==Control::Browse){Browse();return;}
+        if(id==Control::Load){LoadSelected(true);return;}
+        if(!ready_||busy_)return;
+        if(id==Control::Refresh){Refresh();return;}
+        if(id==Control::Acl){
+            draftAcl_=!draftAcl_;
+            if(draftAcl_)draftSystem_=true; // Legacy invariant: quick lock auto-adds +S.
+        }else if(id==Control::System){
+            if(draftAcl_ && draftSystem_){
+                notice_=L"快速 ACL 加锁必须同时开启 +S。要取消 +S，请先取消 ACL 锁定。";
+                success_=false;InvalidateRect(hwnd_,nullptr,FALSE);return;
+            }
+            draftSystem_=!draftSystem_;
+        }else if(id==Control::Hidden)draftHidden_=!draftHidden_;
+        else if(id==Control::Apply){ApplyDraft();return;}
+        modified_=(draftAcl_!=actual_.aclProtected) ||
+                  (draftSystem_!=actual_.system) || (draftHidden_!=actual_.hidden) ||
+                  (draftAcl_ && !actual_.denyDelete);
+        notice_=modified_?L"设置已预选，磁盘状态尚未更改；点击红色“应用设置”后生效。":
+                         L"设置项已与磁盘实际状态对齐。";
+        success_=true;InvalidateRect(hwnd_,nullptr,FALSE);
+    }
+    void ApplyDraft(){
+        if(!ready_||busy_)return;
+        const bool desiredAcl=draftAcl_,desiredSystem=draftSystem_,desiredHidden=draftHidden_;
+        if(desiredAcl && !desiredSystem){
+            MessageBoxW(hwnd_,L"快速 ACL 加锁会自动添加系统属性 +S。",
+                        L"FolderGuard",MB_ICONINFORMATION);
+            draftSystem_=true;return;
+        }
+        if(actual_.aclProtected!=desiredAcl || (desiredAcl && !actual_.denyDelete)){
+            const wchar_t* warning=desiredAcl?
+                L"快速加锁会替换目标顶层目录 ACL 并添加拒绝删除规则；它不会保护已知完整路径的子文件。\r\n\r\n确定继续？":
+                L"快速解锁会重置目标顶层目录 ACL 为继承权限，原有自定义 ACE 可能丢失。\r\n\r\n确定继续？";
+            if(MessageBoxW(hwnd_,warning,L"权限变更确认",
+                MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES)return;
+        }
+        busy_=true;EnableWindow(edit_,FALSE);
+        notice_=L"正在写入 NTFS 设置，请勿关闭程序…";
+        InvalidateRect(hwnd_,nullptr,FALSE);
+        const auto path=selected_;const auto notify=hwnd_;
+        std::thread([path,notify,desiredAcl,desiredSystem,desiredHidden](){
+            const DWORD begin=GetTickCount();
+            security::Status state=security::ReadStatus(path);
+            security::Result final{true,L"所有请求的设置均已处理。"};
+            std::wstring operations;
+            auto perform=[&](security::Action act,const wchar_t* title){
+                auto r=security::Apply(path,act);
+                operations+=title;
+                operations+=(r.ok?L"：成功\r\n":L"：失败 — "+r.message+L"\r\n");
+                if(!r.ok){final=r;return false;}
+                state=security::ReadStatus(path);
+                if(!state.error.empty()){
+                    final={false,L"重新读取实际状态失败："+state.error};
+                    return false;
+                }
+                return true;
+            };
+            bool ok=true;
+            if(desiredAcl && (!state.aclProtected || !state.denyDelete))
+                ok=perform(security::Action::QuickLock,L"快速 ACL 加锁");
+            else if(!desiredAcl && state.aclProtected)
+                ok=perform(security::Action::QuickUnlock,L"快速 ACL 解锁");
+            if(ok && state.system!=desiredSystem)
+                ok=perform(desiredSystem?security::Action::SystemOn:security::Action::SystemOff,L"系统属性 +S");
+            if(ok && state.hidden!=desiredHidden)
+                ok=perform(desiredHidden?security::Action::HiddenOn:security::Action::HiddenOff,L"隐藏属性 +H");
+            if(operations.empty())operations=L"当前状态与目标设置一致，无须更改。\r\n";
+            auto* result=new Outcome{final,security::ReadStatus(path),operations,GetTickCount()-begin};
+            if(!PostMessageW(notify,kDone,0,reinterpret_cast<LPARAM>(result)))delete result;
         }).detach();
     }
-    void ShowAclReport() {
-        const auto report = security::DescribeAcl(EditPath());
-        OpenAclViewer(hwnd_, report);
+    bool EnsureRenderTarget(){
+        if(target_)return true;
+        RECT rc{};GetClientRect(hwnd_,&rc);
+        return SUCCEEDED(factory_->CreateHwndRenderTarget(D2D1::RenderTargetProperties(
+          D2D1_RENDER_TARGET_TYPE_DEFAULT,D2D1::PixelFormat(DXGI_FORMAT_UNKNOWN,
+          D2D1_ALPHA_MODE_UNKNOWN),96,96),D2D1::HwndRenderTargetProperties(
+          hwnd_,D2D1::SizeU(std::max(1L,rc.right),std::max(1L,rc.bottom))),target_.GetAddressOf()));
     }
-    void Browse() {
-        ComPtr<IFileOpenDialog> dlg;
-        if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return;
-        DWORD options = 0;
-        dlg->GetOptions(&options);
-        dlg->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
-        dlg->SetTitle(L"选择需要保护的 NTFS 数据目录");
-        if (FAILED(dlg->Show(hwnd_))) return;
-        ComPtr<IShellItem> item;
-        if (FAILED(dlg->GetResult(&item))) return;
-        PWSTR chosen = nullptr;
-        if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &chosen)) && chosen) {
-            SetWindowTextW(edit_, chosen);
-            CoTaskMemFree(chosen);
-            Refresh();
-        }
-    }
-    void Shape(Rect r, unsigned fill, float radius = 16.f, unsigned stroke = 0, float opacity = 1.f) {
-        if (!target_) return;
+    void Shape(Rect r,unsigned fill,float rad=13.f,unsigned outline=0,float opacity=1.f){
         ComPtr<ID2D1SolidColorBrush> b;
-        target_->CreateSolidColorBrush(C(fill, opacity), b.GetAddressOf());
-        if (!b) return;
-        auto rounded = D2D1::RoundedRect(r.box(), radius, radius);
-        target_->FillRoundedRectangle(rounded, b.Get());
-        if (stroke) {
-            ComPtr<ID2D1SolidColorBrush> line;
-            target_->CreateSolidColorBrush(C(stroke), line.GetAddressOf());
-            if (line) target_->DrawRoundedRectangle(rounded, line.Get(), 1.f);
-        }
+        if(FAILED(target_->CreateSolidColorBrush(Color(fill,opacity),b.GetAddressOf())))return;
+        auto shape=D2D1::RoundedRect(r.box(),rad,rad);
+        target_->FillRoundedRectangle(shape,b.Get());
+        if(outline){ComPtr<ID2D1SolidColorBrush> stroke;
+            if(SUCCEEDED(target_->CreateSolidColorBrush(Color(outline),stroke.GetAddressOf())))
+                target_->DrawRoundedRectangle(shape,stroke.Get(),1.f);}
     }
-    void Text(std::wstring s, Rect rect, IDWriteTextFormat* format, unsigned color, DWRITE_TEXT_ALIGNMENT align = DWRITE_TEXT_ALIGNMENT_LEADING) {
-        if (!format || !target_) return;
-        format->SetTextAlignment(align);
-        ComPtr<ID2D1SolidColorBrush> brush;
-        target_->CreateSolidColorBrush(C(color), brush.GetAddressOf());
-        if (brush) target_->DrawText(s.c_str(), static_cast<UINT32>(s.size()), format, rect.box(), brush.Get(),
-                                         D2D1_DRAW_TEXT_OPTIONS_CLIP);
-    }
-    void Circle(float x, float y, float radius, unsigned color) {
+    void Text(const std::wstring& str,Rect r,IDWriteTextFormat* fmt,unsigned color,
+              DWRITE_TEXT_ALIGNMENT align=DWRITE_TEXT_ALIGNMENT_LEADING){
+        if(!fmt)return;fmt->SetTextAlignment(align);
         ComPtr<ID2D1SolidColorBrush> b;
-        target_->CreateSolidColorBrush(C(color), b.GetAddressOf());
-        if (b) target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x,y), radius, radius), b.Get());
+        if(SUCCEEDED(target_->CreateSolidColorBrush(Color(color),b.GetAddressOf())))
+            target_->DrawText(str.c_str(),UINT32(str.size()),fmt,r.box(),b.Get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
-    void ButtonDraw(ButtonId id, Rect r, const std::wstring& title, const std::wstring& desc,
-                    unsigned accent, bool filled = false) {
-        buttons_.push_back({id, r});
-        bool hover = r.contains(hoverX_,hoverY_) && !busy_;
-        unsigned bg = filled ? (hover ? 0x2754C0 : 0x3567DB) : (hover ? 0xEEF4FE : 0xFFFFFF);
-        Shape(r, bg, 14, filled ? 0 : 0xDFE6F0, busy_ ? 0.55f : 1.0f);
-        Circle(r.x+25, r.y+29, 7, accent);
-        Text(title, {r.x+44,r.y+15,r.w-55,27}, formatBold_.Get(), filled ? 0xFFFFFF : 0x21344E);
-        Text(desc, {r.x+20,r.y+54,r.w-30,40}, formatSmall_.Get(), filled ? 0xEDF3FF : 0x6D7C91);
+    void Dot(float x,float y,float radius,unsigned color){
+        ComPtr<ID2D1SolidColorBrush> b;
+        if(SUCCEEDED(target_->CreateSolidColorBrush(Color(color),b.GetAddressOf())))
+            target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x,y),radius,radius),b.Get());
     }
-    bool EnsureTarget() {
-        if (target_) return true;
-        RECT rc; GetClientRect(hwnd_, &rc);
-        HRESULT hr = factory_->CreateHwndRenderTarget(
-            D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
-                D2D1::PixelFormat(DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_UNKNOWN), 96, 96),
-            D2D1::HwndRenderTargetProperties(hwnd_, D2D1::SizeU(
-                std::max(1L, rc.right - rc.left), std::max(1L, rc.bottom - rc.top))), &target_);
-        return SUCCEEDED(hr);
+    void Button(Control id,Rect r,const std::wstring& label,bool enabled,bool primary=false){
+        hits_.push_back({id,r,enabled});
+        const bool hover=enabled && r.contains(mx_,my_) && !busy_;
+        unsigned bg=enabled?(primary?(hover?0xAE2E3A:0xCA3E48):(hover?0xE8F0FD:0xF9FBFF)):0xE9EDF3;
+        Shape(r,bg,10,primary?0:enabled?0xD9E2EF:0xE1E6ED);
+        Text(label,{r.x+10,r.y+8,r.w-20,r.h-10},bold_.Get(),
+             enabled?(primary?0xFFFFFF:0x355273):0xA9B3C0,DWRITE_TEXT_ALIGNMENT_CENTER);
     }
-    void Draw() {
-        if (!EnsureTarget()) return;
-        RECT raw; GetClientRect(hwnd_, &raw);
-        const float W = 1180.f;
-        const float H = 820.f;
-        const float L = 250.f;
-        const float X = L + 22.f;
-        const float R = W - X - 26.f;
+    void Chip(Rect r,const std::wstring& label,bool on){
+        Shape(r,on?0xE8F7F0:0xF3F5F8,11,on?0xC5E7D5:0xE3E8EE);
+        Dot(r.x+20,r.y+23,5,on?0x20936C:0xB4BCC8);
+        Text(label,{r.x+34,r.y+9,r.w-43,24},small_.Get(),on?0x277454:0x65758B);
+        Text(on?L"已开启":L"未开启",{r.x+34,r.y+30,r.w-43,22},tiny_.Get(),on?0x288763:0x8491A1);
+    }
+    void Option(Control id,Rect r,const std::wstring& title,const std::wstring& subtitle,bool on){
+        const bool enabled=ready_&&!busy_;
+        hits_.push_back({id,r,enabled});
+        bool hover=enabled && r.contains(mx_,my_);
+        Shape(r,!enabled?0xF3F5F8:on?0xEAF2FF:(hover?0xF7FAFF:0xFFFFFF),
+            12,!enabled?0xE7EBF0:on?0x7CA5E8:0xDAE2EC);
+        Dot(r.x+21,r.y+28,9,!enabled?0xC7CDD5:on?0x386BCE:0xA6B2C2);
+        Text(on?L"✓":L"",{r.x+12,r.y+16,18,24},bold_.Get(),0xFFFFFF);
+        Text(title,{r.x+42,r.y+12,r.w-50,26},bold_.Get(),!enabled?0xA3ADBA:0x263955);
+        Text(subtitle,{r.x+17,r.y+47,r.w-26,28},small_.Get(),!enabled?0xADB5C0:0x79889B);
+    }
+    void Draw(){
+        if(!EnsureRenderTarget())return;
+        RECT rc{};GetClientRect(hwnd_,&rc);
         target_->BeginDraw();
-        target_->SetTransform(D2D1::Matrix3x2F::Scale(float(raw.right)/1180.f, float(raw.bottom)/820.f));
-        target_->Clear(C(0xF3F6FB));
-        buttons_.clear();
-        Shape({0,0,L,H}, 0xFFFFFF, 0);
-        Shape({21,30,44,44}, 0x3567DB, 13);
-        Text(L"◆", {32,33,30,40}, formatTitle_.Get(), 0xFFFFFF);
-        Text(L"FolderGuard", {80,30,158,38}, formatTitle_.Get(), 0x20314D);
-        Text(L"NATIVE SECURITY WORKSPACE", {25,85,218,21}, formatTiny_.Get(), 0x8592A5);
-        Shape({16,155,218,47}, 0xEAF0FF, 10);
-        Text(L"▣   文件保护工作台", {34,166,189,30}, formatBold_.Get(), 0x3159B6);
-        Text(L"系统工具", {30,243,180,26}, formatSmall_.Get(), 0x8995A7);
-        Text(L"Windows 7 / 10", {33,283,180,24}, formatBody_.Get(), 0x69798F);
-        Text(L"Win32 + Direct2D", {33,323,180,24}, formatBody_.Get(), 0xC2CEE2);
-        Shape({20,H-132,211,105}, 0xF0F5FF, 14, 0xDFE8F9);
-        Text(L"LOCAL FIRST", {35,H-117,186,25}, formatBold_.Get(), 0x3768C1);
-        Text(L"不联网 · 不上传文件", {35,H-83,183,25}, formatSmall_.Get(), 0x33455C);
-        Text(L"管理员权限运行 · UAC", {35,H-58,184,25}, formatTiny_.Get(), 0x70839D);
+        target_->SetTransform(D2D1::Matrix3x2F::Scale(float(rc.right)/W,float(rc.bottom)/H));
+        target_->Clear(Color(0xF4F7FB));hits_.clear();
+        Text(L"FolderGuard",{42,27,390,45},hero_.Get(),0x20344F);
+        Text(L"文件夹权限与属性管理",{44,73,465,30},body_.Get(),0x7B8B9E);
+        Button(Control::Refresh,{825,42,132,43},L"↻  刷新状态",ready_&&!busy_);
 
-        Text(L"文件夹保护中心", {X,31,R-200,48}, formatHero_.Get(), 0x1C304F);
-        Text(L"清晰、安全、可恢复的本地权限管理", {X,83,R-200,29}, formatBody_.Get(), 0x7C8BA0);
-        ButtonDraw(ButtonId::AclDetails, {X+R-278,45,133,48}, L"ACL 明细", L"", 0x4485DD);
-        ButtonDraw(ButtonId::Refresh, {X+R-134,45,132,48}, L"刷新状态", L"", 0x3C9DB5);
-        Shape({X,132,R,128}, 0xFFFFFF, 18, 0xDFE6F0);
-        Text(L"目标 NTFS 文件夹", {X+21,147,R-42,29}, formatBold_.Get(), 0x4C607C);
-        // EDIT is a true native control with normal clipboard and keyboard support.
-        Shape({X+15,195,R-174,44}, 0xF8FAFD, 10, 0xDCE5F1);
-        ButtonDraw(ButtonId::Browse, {X+R-148,192,129,48}, L"选择目录", L"", 0x3768C1);
+        Shape({42,114,916,123},0xFFFFFF,16,0xE1E7F0);
+        Text(L"目标文件夹",{65,131,230,30},section_.Get(),0x263B59);
+        Text(L"支持 NTFS · 不会自动扫描其他文件夹",{640,134,293,26},small_.Get(),0x8896A8,DWRITE_TEXT_ALIGNMENT_TRAILING);
+        Shape({65,170,640,48},0xF8FAFD,10,0xDCE5EF);
+        Button(Control::Load,{715,170,109,47},L"载入目录",!busy_);
+        Button(Control::Browse,{839,170,97,47},L"浏览…",!busy_);
 
-        Shape({X,276,R,109}, 0xFFFFFF, 18, 0xDFE6F0);
-        Circle(X+30,316,10, busy_ ? 0xDFA34B :
-                     (status_.aclProtected ? 0x1EAD82 : 0xD49B46));
-        const std::wstring state = busy_ ? L"正在处理权限…" : status_.aclProtected ? L"目录 ACL 已限制继承" :
-                          status_.exists ? L"目录未开启顶层 ACL 隔离" : L"请先选择有效的 NTFS 目录";
-        Text(state, {X+53,292,R-85,35}, formatTitle_.Get(), 0x253650);
-        const std::wstring props = std::wstring(L"SYSTEM ") + (status_.system ? L"ON" : L"OFF") +
-            L"    /    HIDDEN " + (status_.hidden ? L"ON" : L"OFF") +
-            L"    /    DELETE DENY " + (status_.denyDelete ? L"ON" : L"OFF");
-        Text(props, {X+53,340,R-85,27}, formatSmall_.Get(), 0x718298);
+        Shape({42,252,916,131},0xFFFFFF,16,0xE1E7F0);
+        Text(L"当前保护状态",{65,266,250,31},section_.Get(),0x263B59);
+        Text(ready_?L"以下四项均为磁盘当前实际状态":L"未载入目录，权限操作暂不可用",
+            {486,270,450,25},small_.Get(),0x8292A6,DWRITE_TEXT_ALIGNMENT_TRAILING);
+        float gap=12,chipW=(870.f-3*gap)/4.f;
+        Chip({65,307,chipW,59},L"ACL 权限保护",ready_ && actual_.aclProtected);
+        Chip({65+chipW+gap,307,chipW,59},L"禁止删除规则",ready_ && actual_.denyDelete);
+        Chip({65+(chipW+gap)*2,307,chipW,59},L"系统属性 +S",ready_ && actual_.system);
+        Chip({65+(chipW+gap)*3,307,chipW,59},L"隐藏属性 +H",ready_ && actual_.hidden);
 
-        Text(L"权限控制", {X,404,300,32}, formatTitle_.Get(), 0x253650);
-        Text(L"快速模式不遍历子文件", {X+R-240,411,240,26}, formatSmall_.Get(), 0x8190A3, DWRITE_TEXT_ALIGNMENT_TRAILING);
-        const float gap = 13;
-        const float tile = (R-gap)/2;
-        ButtonDraw(ButtonId::QuickLock,   {X,447,tile,101}, L"快速加锁", L"顶层 ACL  +  禁止删除  +S", 0xC7EDE2, true);
-        ButtonDraw(ButtonId::QuickUnlock, {X+tile+gap,447,tile,101}, L"快速解锁", L"顶层恢复继承，不改子文件", 0x6D93E4);
-        ButtonDraw(ButtonId::FullLock,    {X,561,tile,101}, L"完整加锁", L"递归修改子文件 ACL · 慎用", 0xD9A35E);
-        ButtonDraw(ButtonId::FullUnlock,  {X+tile+gap,561,tile,101}, L"完整解锁", L"递归重置原权限 · 慎用", 0xD48F95);
+        Shape({42,397,916,149},0xFFFFFF,16,0xE1E7F0);
+        Text(L"设置选项",{65,410,250,31},section_.Get(),0x263B59);
+        Text(modified_?L"有未应用的变更":L"选项与当前状态同步",
+             {693,415,244,27},small_.Get(),modified_?0xB64D54:0x7D91A6,DWRITE_TEXT_ALIGNMENT_TRAILING);
+        float wOpt=(870.f-24.f)/3.f;
+        Option(Control::Acl,{65,454,wOpt,73},L"快速 ACL 保护",L"限制顶层目录 + 拒绝删除",draftAcl_);
+        Option(Control::System,{65+wOpt+12,454,wOpt,73},L"系统属性 +S",L"ACL 加锁时会自动启用",draftSystem_);
+        Option(Control::Hidden,{65+(wOpt+12)*2,454,wOpt,73},L"隐藏属性 +H",L"默认不在资源管理器显示",draftHidden_);
 
-        Shape({X,679,R,70}, 0xFFFFFF, 14, 0xDFE6F0);
-        Text(L"目录属性", {X+18,691,143,28}, formatBold_.Get(), 0x354C6B);
-        ButtonDraw(ButtonId::System, {X+164,688,190,52}, status_.system ? L"✓ System +S" : L"System -S", L"", 0x4C7FC8);
-        ButtonDraw(ButtonId::Hidden, {X+366,688,190,52}, status_.hidden ? L"✓ Hidden +H" : L"Hidden -H", L"", 0xA37AD0);
-        ButtonDraw(ButtonId::Open, {X+R-139,688,122,52}, L"打开目录", L"", 0x309DB1);
-
-        const float footerY = std::max(758.f, H-52.f);
-        Shape({X,footerY,R,43}, success_ ? 0xE7F6EF : 0xFFF0F0, 10);
-        if (busy_) {
-            float phase = (GetTickCount() - started_) / 500.f;
-            Shape({X+6+std::fmod(phase*100.f, std::max(1.f,R-155.f)),footerY+36,100,3}, 0x239776, 1.f);
-        }
-        Text(notice_, {X+13,footerY+7,R-22,30}, formatSmall_.Get(), success_ ? 0x236F59 : 0xA73442);
-        if (FAILED(target_->EndDraw())) target_.Reset();
+        Button(Control::Apply,{42,560,916,60},
+               busy_?L"正在应用设置…":L"应用设置",ready_&&!busy_,true);
+        Shape({42,629,916,35},success_?0xEDF5F1:0xFFF0F0,9);
+        Text(notice_,{55,637,730,23},small_.Get(),success_?0x427461:0xA84B55);
+        Text(L"v3.2.0  ·  Windows 7 / 10",{42,665,380,20},tiny_.Get(),0x93A1B0);
+        hits_.push_back({Control::GitHub,{790,662,168,20},true});
+        Text(L"GitHub  /  mrgolftech ↗",{777,663,181,21},small_.Get(),
+             0x3768C1,DWRITE_TEXT_ALIGNMENT_TRAILING);
+        if(FAILED(target_->EndDraw()))target_.Reset();
     }
 };
 } // namespace
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
-    std::wstring initialPath;
+int WINAPI wWinMain(HINSTANCE inst,HINSTANCE,PWSTR,int){
+    std::wstring initial;
     int argc=0;
-    LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (argv) {
-        for (int i=1;i+1<argc;++i) {
-            if (_wcsicmp(argv[i],L"--path")==0) { initialPath=argv[i+1];break; }
+    LPWSTR* argv=CommandLineToArgvW(GetCommandLineW(),&argc);
+    if(argv){
+        for(int i=1;i+1<argc;++i)if(_wcsicmp(argv[i],L"--path")==0){
+            initial=argv[i+1];break;
         }
         LocalFree(argv);
     }
-    SetProcessDPIAware(); // Available on Windows 7; D2D coordinates are explicitly 96 dpi pixels.
+    SetProcessDPIAware();
     App app;
-    if (!app.Init(instance, initialPath)) {
-        MessageBoxW(nullptr, L"无法初始化 Direct2D / DirectWrite 窗口。", L"FolderGuard", MB_ICONERROR);
+    if(!app.Init(inst,initial)){
+        MessageBoxW(nullptr,L"无法初始化 Direct2D / DirectWrite。",L"FolderGuard",MB_ICONERROR);
         return 1;
     }
     return app.Run();
