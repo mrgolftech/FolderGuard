@@ -25,6 +25,10 @@ jobs:
         run: cmake --build build --config Release --parallel
       - name: Run NTFS security smoke tests
         run: ctest --test-dir build -C Release --verbose
+      - name: Exercise GUI controls on disposable directory
+        if: matrix.platform == 'x64'
+        shell: pwsh
+        run: ./tests/GuiInteraction.ps1
       - name: Capture real GUI screenshot (best effort)
         if: matrix.platform == 'x64'
         shell: pwsh
