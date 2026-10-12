@@ -126,7 +126,7 @@ try {
     if($confirm -eq [IntPtr]::Zero){throw 'Permission confirmation popup missing'}
     $yes=[NativeUiTest]::GetDlgItem($confirm,6)
     if($yes -eq [IntPtr]::Zero){throw 'Confirm YES button missing'}
-    [NativeUiTest]::SendMessageW($yes,0xF5,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
+    [NativeUiTest]::PostMessageW($yes,0xF5,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
   }
   function Assert-RootProtected([bool]$expected) {
     for($i=0;$i -lt 60;$i++){
