@@ -39,7 +39,7 @@ struct Rect { float x{}, y{}, w{}, h{};
     D2D1_RECT_F box() const { return D2D1::RectF(x,y,x+w,y+h); }
     bool contains(float mx, float my) const { return mx >= x && my >= y && mx <= x+w && my <= y+h; }
 };
-enum class ButtonId { Browse, Refresh, Open, QuickLock, QuickUnlock, FullLock, FullUnlock, System, Hidden };
+enum class ButtonId { Browse, Refresh, Open, AclDetails, QuickLock, QuickUnlock, FullLock, FullUnlock, System, Hidden };
 struct Button { ButtonId id; Rect rect; };
 struct Outcome { security::Result result; unsigned long ms; };
 
@@ -63,7 +63,7 @@ public:
         cls.lpszClassName = kClass;
         cls.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         cls.hIcon = LoadIconW(nullptr, IDI_SHIELD);
-        cls.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+        cls.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH));
         if (!RegisterClassExW(&cls)) return false;
         hwnd_ = CreateWindowExW(0, kClass, L"FolderGuard 3.0 — 文件保护工作台",
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT,
@@ -76,7 +76,7 @@ public:
             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         SendMessageW(edit_, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
         LayoutEdit();
-        brushEdit_ = CreateSolidBrush(RGB(25,35,54));
+        brushEdit_ = CreateSolidBrush(RGB(248,250,253));
         ShowWindow(hwnd_, SW_SHOW);
         UpdateWindow(hwnd_);
         Refresh();
@@ -173,8 +173,8 @@ private:
             return 0;
         case WM_CTLCOLOREDIT: {
             auto dc = reinterpret_cast<HDC>(wp);
-            SetTextColor(dc, RGB(235,241,255));
-            SetBkColor(dc, RGB(25,35,54));
+            SetTextColor(dc, RGB(32,48,76));
+            SetBkColor(dc, RGB(248,250,253));
             return reinterpret_cast<LRESULT>(brushEdit_);
         }
         case WM_PAINT: {
@@ -234,6 +234,7 @@ private:
         switch (id) {
         case ButtonId::Browse: Browse(); return;
         case ButtonId::Refresh: Refresh(); return;
+        case ButtonId::AclDetails: ShowAclReport(); return;
         case ButtonId::Open: {
             path_ = EditPath();
             ShellExecuteW(hwnd_, L"open", path_.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
@@ -280,6 +281,7 @@ private:
             if (!PostMessageW(notify, kDone, 0, reinterpret_cast<LPARAM>(out))) delete out;
         }).detach();
     }
+    void ShowAclReport();
     void Browse() {
         ComPtr<IFileOpenDialog> dlg;
         if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return;
@@ -327,11 +329,11 @@ private:
                     unsigned accent, bool filled = false) {
         buttons_.push_back({id, r});
         bool hover = r.contains(hoverX_,hoverY_) && !busy_;
-        unsigned bg = filled ? (hover ? 0x567CEF : 0x4067DB) : (hover ? 0x273954 : 0x1B2940);
-        Shape(r, bg, 14, filled ? 0 : 0x34435C, busy_ ? 0.55f : 1.0f);
+        unsigned bg = filled ? (hover ? 0x2754C0 : 0x3567DB) : (hover ? 0xEEF4FE : 0xFFFFFF);
+        Shape(r, bg, 14, filled ? 0 : 0xDFE6F0, busy_ ? 0.55f : 1.0f);
         Circle(r.x+25, r.y+29, 7, accent);
-        Text(title, {r.x+44,r.y+15,r.w-55,27}, formatBold_.Get(), 0xF7FAFF);
-        Text(desc, {r.x+20,r.y+54,r.w-30,40}, formatSmall_.Get(), filled ? 0xE5EBFF : 0xA5B4CC);
+        Text(title, {r.x+44,r.y+15,r.w-55,27}, formatBold_.Get(), filled ? 0xFFFFFF : 0x21344E);
+        Text(desc, {r.x+20,r.y+54,r.w-30,40}, formatSmall_.Get(), filled ? 0xEDF3FF : 0x6D7C91);
     }
     bool EnsureTarget() {
         if (target_) return true;
@@ -353,65 +355,66 @@ private:
         const float R = W - X - 26.f;
         target_->BeginDraw();
         target_->SetTransform(D2D1::Matrix3x2F::Scale(float(raw.right)/1180.f, float(raw.bottom)/820.f));
-        target_->Clear(C(0x0B111E));
+        target_->Clear(C(0xF3F6FB));
         buttons_.clear();
-        Shape({0,0,L,H}, 0x111B2C, 0);
-        Shape({21,30,44,44}, 0x4D72E8, 13);
+        Shape({0,0,L,H}, 0xFFFFFF, 0);
+        Shape({21,30,44,44}, 0x3567DB, 13);
         Text(L"◆", {32,33,30,40}, formatTitle_.Get(), 0xFFFFFF);
-        Text(L"FolderGuard", {80,30,158,38}, formatTitle_.Get(), 0xF5F8FF);
-        Text(L"NATIVE SECURITY WORKSPACE", {25,85,218,21}, formatTiny_.Get(), 0x8194B6);
-        Shape({16,155,218,47}, 0x263C67, 10);
-        Text(L"▣   文件保护工作台", {34,166,189,30}, formatBold_.Get(), 0xFFFFFF);
-        Text(L"系统工具", {30,243,180,26}, formatSmall_.Get(), 0x7288A7);
-        Text(L"Windows 7 / 10", {33,283,180,24}, formatBody_.Get(), 0xC2CEE2);
+        Text(L"FolderGuard", {80,30,158,38}, formatTitle_.Get(), 0x20314D);
+        Text(L"NATIVE SECURITY WORKSPACE", {25,85,218,21}, formatTiny_.Get(), 0x8592A5);
+        Shape({16,155,218,47}, 0xEAF0FF, 10);
+        Text(L"▣   文件保护工作台", {34,166,189,30}, formatBold_.Get(), 0x3159B6);
+        Text(L"系统工具", {30,243,180,26}, formatSmall_.Get(), 0x8995A7);
+        Text(L"Windows 7 / 10", {33,283,180,24}, formatBody_.Get(), 0x69798F);
         Text(L"Win32 + Direct2D", {33,323,180,24}, formatBody_.Get(), 0xC2CEE2);
-        Shape({20,H-132,211,105}, 0x1A2940, 14, 0x31425E);
-        Text(L"LOCAL FIRST", {35,H-117,186,25}, formatBold_.Get(), 0x9FC0FF);
-        Text(L"不联网 · 不上传文件", {35,H-83,183,25}, formatSmall_.Get(), 0xDDE6F6);
-        Text(L"仅本机管理员可以修改 ACL", {35,H-58,184,25}, formatTiny_.Get(), 0x91A5C2);
+        Shape({20,H-132,211,105}, 0xF0F5FF, 14, 0xDFE8F9);
+        Text(L"LOCAL FIRST", {35,H-117,186,25}, formatBold_.Get(), 0x3768C1);
+        Text(L"不联网 · 不上传文件", {35,H-83,183,25}, formatSmall_.Get(), 0x33455C);
+        Text(L"管理员权限运行 · UAC", {35,H-58,184,25}, formatTiny_.Get(), 0x70839D);
 
-        Text(L"文件夹保护中心", {X,31,R-200,48}, formatHero_.Get(), 0xF2F5FC);
-        Text(L"清晰、安全、可恢复的本地权限管理", {X,83,R-200,29}, formatBody_.Get(), 0x93A5BE);
-        ButtonDraw(ButtonId::Refresh, {X+R-134,45,132,48}, L"刷新状态", L"", 0x70C4FF);
-        Shape({X,132,R,128}, 0x142035, 18, 0x243853);
-        Text(L"目标 NTFS 文件夹", {X+21,147,R-42,29}, formatBold_.Get(), 0xC3D5EF);
+        Text(L"文件夹保护中心", {X,31,R-200,48}, formatHero_.Get(), 0x1C304F);
+        Text(L"清晰、安全、可恢复的本地权限管理", {X,83,R-200,29}, formatBody_.Get(), 0x7C8BA0);
+        ButtonDraw(ButtonId::AclDetails, {X+R-278,45,133,48}, L"ACL 明细", L"", 0x4485DD);
+        ButtonDraw(ButtonId::Refresh, {X+R-134,45,132,48}, L"刷新状态", L"", 0x3C9DB5);
+        Shape({X,132,R,128}, 0xFFFFFF, 18, 0xDFE6F0);
+        Text(L"目标 NTFS 文件夹", {X+21,147,R-42,29}, formatBold_.Get(), 0x4C607C);
         // EDIT is a true native control with normal clipboard and keyboard support.
-        Shape({X+15,195,R-174,44}, 0x192336, 10, 0x34455F);
-        ButtonDraw(ButtonId::Browse, {X+R-148,192,129,48}, L"选择目录", L"", 0xA9C4FF);
+        Shape({X+15,195,R-174,44}, 0xF8FAFD, 10, 0xDCE5F1);
+        ButtonDraw(ButtonId::Browse, {X+R-148,192,129,48}, L"选择目录", L"", 0x3768C1);
 
-        Shape({X,276,R,109}, 0x15243A, 18, 0x2C4460);
-        Circle(X+30,316,10, busy_ ? 0xF1B95C :
-                     (status_.aclProtected ? 0x64D8AD : 0xE3AE67));
+        Shape({X,276,R,109}, 0xFFFFFF, 18, 0xDFE6F0);
+        Circle(X+30,316,10, busy_ ? 0xDFA34B :
+                     (status_.aclProtected ? 0x1EAD82 : 0xD49B46));
         const std::wstring state = busy_ ? L"正在处理权限…" : status_.aclProtected ? L"目录 ACL 已限制继承" :
                           status_.exists ? L"目录未开启顶层 ACL 隔离" : L"请先选择有效的 NTFS 目录";
-        Text(state, {X+53,292,R-85,35}, formatTitle_.Get(), 0xF2F7FF);
+        Text(state, {X+53,292,R-85,35}, formatTitle_.Get(), 0x253650);
         const std::wstring props = std::wstring(L"SYSTEM ") + (status_.system ? L"ON" : L"OFF") +
             L"    /    HIDDEN " + (status_.hidden ? L"ON" : L"OFF") +
             L"    /    DELETE DENY " + (status_.denyDelete ? L"ON" : L"OFF");
-        Text(props, {X+53,340,R-85,27}, formatSmall_.Get(), 0x96B3D0);
+        Text(props, {X+53,340,R-85,27}, formatSmall_.Get(), 0x718298);
 
-        Text(L"权限控制", {X,404,300,32}, formatTitle_.Get(), 0xF3F6FF);
-        Text(L"快速模式不遍历子文件", {X+R-240,411,240,26}, formatSmall_.Get(), 0x8398B8, DWRITE_TEXT_ALIGNMENT_TRAILING);
+        Text(L"权限控制", {X,404,300,32}, formatTitle_.Get(), 0x253650);
+        Text(L"快速模式不遍历子文件", {X+R-240,411,240,26}, formatSmall_.Get(), 0x8190A3, DWRITE_TEXT_ALIGNMENT_TRAILING);
         const float gap = 13;
         const float tile = (R-gap)/2;
-        ButtonDraw(ButtonId::QuickLock,   {X,447,tile,101}, L"快速加锁", L"顶层 ACL  +  禁止删除  +S", 0x79D9BA, true);
-        ButtonDraw(ButtonId::QuickUnlock, {X+tile+gap,447,tile,101}, L"快速解锁", L"顶层恢复继承，不改子文件", 0x7FA7FA);
-        ButtonDraw(ButtonId::FullLock,    {X,561,tile,101}, L"完整加锁", L"递归修改子文件 ACL · 慎用", 0xF7BE79);
-        ButtonDraw(ButtonId::FullUnlock,  {X+tile+gap,561,tile,101}, L"完整解锁", L"递归重置原权限 · 慎用", 0xE5A6A6);
+        ButtonDraw(ButtonId::QuickLock,   {X,447,tile,101}, L"快速加锁", L"顶层 ACL  +  禁止删除  +S", 0xC7EDE2, true);
+        ButtonDraw(ButtonId::QuickUnlock, {X+tile+gap,447,tile,101}, L"快速解锁", L"顶层恢复继承，不改子文件", 0x6D93E4);
+        ButtonDraw(ButtonId::FullLock,    {X,561,tile,101}, L"完整加锁", L"递归修改子文件 ACL · 慎用", 0xD9A35E);
+        ButtonDraw(ButtonId::FullUnlock,  {X+tile+gap,561,tile,101}, L"完整解锁", L"递归重置原权限 · 慎用", 0xD48F95);
 
-        Shape({X,679,R,70}, 0x152035, 14, 0x283953);
-        Text(L"目录属性", {X+18,691,143,28}, formatBold_.Get(), 0xD8E2F5);
-        ButtonDraw(ButtonId::System, {X+164,688,190,52}, status_.system ? L"✓ System +S" : L"System -S", L"", 0xA7CBFF);
-        ButtonDraw(ButtonId::Hidden, {X+366,688,190,52}, status_.hidden ? L"✓ Hidden +H" : L"Hidden -H", L"", 0xBDAAFF);
-        ButtonDraw(ButtonId::Open, {X+R-139,688,122,52}, L"打开目录", L"", 0xA0D3E5);
+        Shape({X,679,R,70}, 0xFFFFFF, 14, 0xDFE6F0);
+        Text(L"目录属性", {X+18,691,143,28}, formatBold_.Get(), 0x354C6B);
+        ButtonDraw(ButtonId::System, {X+164,688,190,52}, status_.system ? L"✓ System +S" : L"System -S", L"", 0x4C7FC8);
+        ButtonDraw(ButtonId::Hidden, {X+366,688,190,52}, status_.hidden ? L"✓ Hidden +H" : L"Hidden -H", L"", 0xA37AD0);
+        ButtonDraw(ButtonId::Open, {X+R-139,688,122,52}, L"打开目录", L"", 0x309DB1);
 
         const float footerY = std::max(758.f, H-52.f);
-        Shape({X,footerY,R,43}, success_ ? 0x172D36 : 0x39252C, 10);
+        Shape({X,footerY,R,43}, success_ ? 0xE7F6EF : 0xFFF0F0, 10);
         if (busy_) {
             float phase = (GetTickCount() - started_) / 500.f;
-            Shape({X+6+std::fmod(phase*100.f, std::max(1.f,R-155.f)),footerY+36,100,3}, 0x68D0B5, 1.f);
+            Shape({X+6+std::fmod(phase*100.f, std::max(1.f,R-155.f)),footerY+36,100,3}, 0x239776, 1.f);
         }
-        Text(notice_, {X+13,footerY+7,R-22,30}, formatSmall_.Get(), success_ ? 0xB3D6CF : 0xF3ADBA);
+        Text(notice_, {X+13,footerY+7,R-22,30}, formatSmall_.Get(), success_ ? 0x236F59 : 0xA73442);
         if (FAILED(target_->EndDraw())) target_.Reset();
     }
 };
