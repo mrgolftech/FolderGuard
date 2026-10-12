@@ -11,7 +11,8 @@ public static class NativeUiTest {
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int cmd);
   [DllImport("user32.dll")] public static extern bool UpdateWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr h);
-  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern bool SetWindowTextW(IntPtr h,string text);
+  [DllImport("user32.dll",CharSet=CharSet.Unicode,EntryPoint="SendMessageW")]
+  public static extern IntPtr SetText(IntPtr h,uint msg,IntPtr unused,string text);
   [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll")] public static extern IntPtr SendMessageW(IntPtr h,uint msg,IntPtr wp,IntPtr lp);
   [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowW(string klass,string caption);
@@ -81,7 +82,9 @@ try {
     throw 'Apply was executable without loading a directory'
   }
   Write-Host '[PASS] empty initial folder; native refresh, settings and Apply disabled'
-  if(-not [NativeUiTest]::SetWindowTextW($emptyEdit,$path)){throw 'Failed to populate path field'}
+  # SetWindowText cannot update a child edit of another process reliably.
+  # WM_SETTEXT is marshalled by Windows for the native EDIT control.
+  [NativeUiTest]::SetText($emptyEdit,0x000C,[IntPtr]::Zero,$path)|Out-Null
   $typed=[System.Text.StringBuilder]::new(1024)
   [NativeUiTest]::GetText($emptyEdit,0xD,[IntPtr]1024,$typed)|Out-Null
   if([string]$typed -ne $path){throw "Pasted path does not match: '$typed' vs '$path'"}
