@@ -397,8 +397,9 @@ private:
         const bool desiredSystem=draftSystem_,desiredHidden=draftHidden_;
         if(actual_.aclProtected!=desiredAcl || actual_.denyDelete!=desiredDeny){
             if(MessageBoxW(hwnd_,
-                L"将仅变更所选的 ACL 继承状态与禁止删除 ACE，不主动重置其他权限。\r\n"
-                L"禁止删除规则不保证阻止具有父目录 DELETE_CHILD 权限的用户删除目录。\r\n\r\n确定继续？",
+                L"ACL 保护会将顶层目录限制为 Administrators / SYSTEM，\r\n"
+                L"关闭保护会恢复父目录继承，并可能覆盖原有自定义 ACL。\r\n"
+                L"禁止删除独立设置，但仍可能被父目录 DELETE_CHILD 权限绕过。\r\n\r\n确定继续？",
                 L"权限变更确认",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES)return;
         }
         busy_=true;EnableWindow(edit_,FALSE);SyncControls();
@@ -517,7 +518,7 @@ private:
              {w-266,275,228,25},small_.Get(),modified_?0xB74B58:0x71859B,
              DWRITE_TEXT_ALIGNMENT_TRAILING);
         const float col=(w-72.f)/2.f;
-        Text(L"仅更改顶层目录 ACL 继承",{63,326,col-25,20},tiny_.Get(),0x75869D);
+        Text(L"顶层目录仅允许管理员及 SYSTEM",{63,326,col-25,20},tiny_.Get(),0x75869D);
         Text(L"独立添加 / 移除删除拒绝规则",{63+col,326,col-25,20},tiny_.Get(),0x75869D);
         Text(L"仅控制系统属性",{63,368,col-25,18},tiny_.Get(),0x75869D);
         Text(L"仅控制隐藏属性",{63+col,368,col-25,18},tiny_.Get(),0x75869D);
