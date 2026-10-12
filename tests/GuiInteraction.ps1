@@ -51,7 +51,7 @@ try {
   Start-Sleep -Milliseconds 1200
   if(-not [NativeUiTest]::SetWindowTextW($edit,$path)){throw 'Path editing failed'}
   Start-Sleep -Milliseconds 300
-  $buffer=New-Object System.Text.StringBuilder(1024)
+  $buffer=[System.Text.StringBuilder]::new(1024)
   [NativeUiTest]::GetText($edit,0x000D,[IntPtr]1024,$buffer)|Out-Null
   Write-Host "[TRACE] GUI text='$buffer' expected='$path'"
   if([string]$buffer -ne $path){throw 'GUI edit field was not updated to requested path'}
