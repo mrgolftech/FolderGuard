@@ -21,5 +21,7 @@ struct Result {
 bool IsAdministrator();
 Result PrepareDirectory(const std::wstring& path, bool createIfMissing);
 Status ReadStatus(const std::wstring& path);
+// Human-readable root ACL report; read-only, no changes to file permissions.
+std::wstring DescribeAcl(const std::wstring& path);
 Result Apply(const std::wstring& path, Action action);
 }
