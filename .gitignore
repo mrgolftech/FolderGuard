@@ -1,0 +1,8 @@
+# Generated/local ACL exports and logs: may contain account names or local paths
+*.folderguard.acl
+*acl-backup*.txt
+*.icacls.log
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
