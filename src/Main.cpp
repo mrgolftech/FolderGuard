@@ -28,7 +28,9 @@ constexpr wchar_t kClass[]=L"FolderGuard.NativeDesktop";
 constexpr wchar_t kGitHub[]=L"https://github.com/mrgolftech/FolderGuard";
 constexpr UINT kDone=WM_APP+11;
 constexpr UINT kPathId=103;
-constexpr float W=1000.f, H=680.f;
+constexpr UINT kBrowseId=104, kRefreshId=105;
+constexpr UINT kAclId=106, kSystemId=107, kHiddenId=108;
+constexpr float W=760.f, H=510.f;
 D2D1_COLOR_F Color(unsigned rgb,float alpha=1.f){
     return D2D1::ColorF(float((rgb>>16)&255)/255.f,float((rgb>>8)&255)/255.f,float(rgb&255)/255.f,alpha);
 }
@@ -37,7 +39,7 @@ struct Rect {
     D2D1_RECT_F box()const{return D2D1::RectF(x,y,x+w,y+h);}
     bool contains(float mx,float my)const{return mx>=x && mx<=x+w && my>=y && my<=y+h;}
 };
-enum class Control { Load, Browse, Refresh, Acl, System, Hidden, Apply, GitHub };
+enum class Control { Acl, System, Hidden, Apply, GitHub };
 struct Hit {Control id;Rect rect;bool enabled;};
 struct Outcome {
     security::Result result;
@@ -51,17 +53,29 @@ class App {
 public:
     bool Init(HINSTANCE inst,const std::wstring& initialPath) {
         inst_=inst;
-        auto co=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
+        const auto co=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
         comInit_=SUCCEEDED(co);
         if(FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,factory_.GetAddressOf())))return false;
         if(FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,__uuidof(IDWriteFactory),
            reinterpret_cast<IUnknown**>(dwrite_.GetAddressOf()))))return false;
-        MakeFormat(hero_,27,DWRITE_FONT_WEIGHT_BOLD);
-        MakeFormat(section_,17,DWRITE_FONT_WEIGHT_SEMI_BOLD);
-        MakeFormat(body_,14,DWRITE_FONT_WEIGHT_NORMAL);
-        MakeFormat(bold_,14,DWRITE_FONT_WEIGHT_SEMI_BOLD);
-        MakeFormat(small_,12,DWRITE_FONT_WEIGHT_NORMAL);
-        MakeFormat(tiny_,11,DWRITE_FONT_WEIGHT_NORMAL);
+        MakeFormat(hero_,23,DWRITE_FONT_WEIGHT_BOLD);
+        MakeFormat(section_,15,DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        MakeFormat(body_,13,DWRITE_FONT_WEIGHT_NORMAL);
+        MakeFormat(bold_,13,DWRITE_FONT_WEIGHT_SEMI_BOLD);
+        MakeFormat(small_,11,DWRITE_FONT_WEIGHT_NORMAL);
+        MakeFormat(tiny_,10,DWRITE_FONT_WEIGHT_NORMAL);
+
+        HDC dc=GetDC(nullptr);
+        const int dpi=dc?GetDeviceCaps(dc,LOGPIXELSX):96;
+        if(dc)ReleaseDC(nullptr,dc);
+        RECT work{};
+        if(!SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0))
+            work={0,0,GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN)};
+        // Uniform scaling: respect system DPI, but fit on smaller Windows 7 screens.
+        const float fitW=float(work.right-work.left-32)/790.f;
+        const float fitH=float(work.bottom-work.top-32)/560.f;
+        scale_=std::max(.8f,std::min(float(dpi)/96.f,std::min(fitW,fitH)));
+
         WNDCLASSEXW cls={sizeof(cls)};
         cls.hInstance=inst;
         cls.lpfnWndProc=&WndProc;
@@ -70,18 +84,41 @@ public:
         cls.hIcon=LoadIconW(nullptr,IDI_SHIELD);
         cls.hbrBackground=reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH));
         if(!RegisterClassExW(&cls))return false;
-        hwnd_=CreateWindowExW(0,kClass,L"FolderGuard 3.2 — 文件夹保护",
-           WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1020,745,
+        constexpr DWORD style=WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN;
+        RECT outer={0,0,Px(W),Px(H)};
+        AdjustWindowRectEx(&outer,style,FALSE,0);
+        hwnd_=CreateWindowExW(0,kClass,L"FolderGuard 3.3 — 文件夹保护",
+           style,work.left+16,work.top+16,outer.right-outer.left,outer.bottom-outer.top,
            nullptr,nullptr,inst,this);
         if(!hwnd_)return false;
+
         edit_=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",initialPath.c_str(),
            WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL,
-           0,0,100,34,hwnd_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPathId)),inst,nullptr);
-        font_=CreateFontW(-18,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
+           0,0,100,30,hwnd_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPathId)),inst,nullptr);
+        browse_=CreateWindowExW(0,L"BUTTON",L"浏览…",
+           WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,0,0,90,30,
+           hwnd_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(kBrowseId)),inst,nullptr);
+        refresh_=CreateWindowExW(0,L"BUTTON",L"刷新状态",
+           WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,0,0,90,29,
+           hwnd_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(kRefreshId)),inst,nullptr);
+        acl_=CreateWindowExW(0,L"BUTTON",L"快速 ACL 保护",
+           WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,0,0,200,27,
+           hwnd_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(kAclId)),inst,nullptr);
+        sys_=CreateWindowExW(0,L"BUTTON",L"系统属性 +S",
+           WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,0,0,200,27,
+           hwnd_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(kSystemId)),inst,nullptr);
+        hidden_=CreateWindowExW(0,L"BUTTON",L"隐藏属性 +H",
+           WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_AUTOCHECKBOX,0,0,200,27,
+           hwnd_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(kHiddenId)),inst,nullptr);
+        if(!edit_||!browse_||!refresh_||!acl_||!sys_||!hidden_)return false;
+        font_=CreateFontW(-Px(14),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
           OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
-        SendMessageW(edit_,WM_SETFONT,reinterpret_cast<WPARAM>(font_),TRUE);
+        for(HWND child:{edit_,browse_,refresh_,acl_,sys_,hidden_})
+            SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(font_),TRUE);
         editBrush_=CreateSolidBrush(RGB(248,250,253));
-        LayoutEdit();
+        checkBrush_=CreateSolidBrush(RGB(255,255,255));
+        LayoutControls();
+        SyncControls();
         ShowWindow(hwnd_,SW_SHOW);
         UpdateWindow(hwnd_);
         if(!initialPath.empty())LoadSelected(false);
@@ -89,24 +126,32 @@ public:
     }
     ~App(){
         if(editBrush_)DeleteObject(editBrush_);
+        if(checkBrush_)DeleteObject(checkBrush_);
         if(font_)DeleteObject(font_);
         if(comInit_)CoUninitialize();
     }
     int Run(){
         MSG msg{};
-        while(GetMessageW(&msg,nullptr,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}
+        while(GetMessageW(&msg,nullptr,0,0)>0){
+            // ENTER on the path field loads it; Tab/Space navigate real Win32 controls.
+            if(msg.hwnd==edit_ && msg.message==WM_KEYDOWN && msg.wParam==VK_RETURN){
+                LoadSelected(true);continue;
+            }
+            if(!IsDialogMessageW(hwnd_,&msg)){TranslateMessage(&msg);DispatchMessageW(&msg);}
+        }
         return int(msg.wParam);
     }
 private:
     HINSTANCE inst_{};
-    HWND hwnd_{},edit_{};
+    HWND hwnd_{},edit_{},browse_{},refresh_{},acl_{},sys_{},hidden_{};
+    float scale_=1.f;
     HFONT font_{};
-    HBRUSH editBrush_{};
+    HBRUSH editBrush_{},checkBrush_{};
     bool comInit_=false,ready_=false,busy_=false,suppressChange_=false;
     bool draftAcl_=false,draftSystem_=false,draftHidden_=false;
     bool modified_=false,success_=true;
     float mx_=-1.f,my_=-1.f;
-    std::wstring selected_,notice_=L"请选择或输入一个 NTFS 文件夹，然后点击“载入”。";
+    std::wstring selected_,notice_=L"浏览选择目录后自动读取；手动输入路径后按 Enter。";
     security::Status actual_{};
     std::vector<Hit> hits_;
     ComPtr<ID2D1Factory> factory_;
@@ -114,6 +159,24 @@ private:
     ComPtr<ID2D1HwndRenderTarget> target_;
     ComPtr<IDWriteTextFormat> hero_,section_,body_,bold_,small_,tiny_;
 
+    int Px(float n)const{return int(std::lround(n*scale_));}
+    float Width()const{RECT r{};GetClientRect(hwnd_,&r);return float(r.right)/scale_;}
+    float Height()const{RECT r{};GetClientRect(hwnd_,&r);return float(r.bottom)/scale_;}
+    void Place(HWND child,float x,float y,float w,float h){
+        if(child)MoveWindow(child,Px(x),Px(y),Px(w),Px(h),TRUE);
+    }
+    void SyncControls(){
+        if(!acl_)return;
+        SendMessageW(acl_,BM_SETCHECK,draftAcl_?BST_CHECKED:BST_UNCHECKED,0);
+        SendMessageW(sys_,BM_SETCHECK,draftSystem_?BST_CHECKED:BST_UNCHECKED,0);
+        SendMessageW(hidden_,BM_SETCHECK,draftHidden_?BST_CHECKED:BST_UNCHECKED,0);
+        EnableWindow(acl_,ready_&&!busy_);
+        // ACL quick lock always implies +S. Unlock ACL first to clear +S.
+        EnableWindow(sys_,ready_&&!busy_&&!draftAcl_);
+        EnableWindow(hidden_,ready_&&!busy_);
+        EnableWindow(refresh_,ready_&&!busy_);
+        EnableWindow(browse_,!busy_);
+    }
     void MakeFormat(ComPtr<IDWriteTextFormat>& out,float size,DWRITE_FONT_WEIGHT weight){
         if(SUCCEEDED(dwrite_->CreateTextFormat(L"Segoe UI",nullptr,weight,
            DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,size,L"zh-CN",out.GetAddressOf()))){
@@ -135,36 +198,50 @@ private:
         switch(msg){
         case WM_GETMINMAXINFO:{
             auto* mm=reinterpret_cast<MINMAXINFO*>(lp);
-            mm->ptMinTrackSize.x=810; mm->ptMinTrackSize.y=610;return 0;
+            mm->ptMinTrackSize.x=Px(700);
+            mm->ptMinTrackSize.y=Px(530);
+            return 0;
         }
         case WM_SIZE:
             if(target_)target_->Resize(D2D1::SizeU(LOWORD(lp),HIWORD(lp)));
-            LayoutEdit();InvalidateRect(hwnd_,nullptr,FALSE);return 0;
+            LayoutControls();InvalidateRect(hwnd_,nullptr,FALSE);return 0;
         case WM_MOUSEMOVE:{
             TRACKMOUSEEVENT t={sizeof(t),TME_LEAVE,hwnd_,0};TrackMouseEvent(&t);
-            RECT rc{};GetClientRect(hwnd_,&rc);
-            mx_=float(GET_X_LPARAM(lp))*W/std::max(1L,rc.right);
-            my_=float(GET_Y_LPARAM(lp))*H/std::max(1L,rc.bottom);
+            mx_=float(GET_X_LPARAM(lp))/scale_;
+            my_=float(GET_Y_LPARAM(lp))/scale_;
             InvalidateRect(hwnd_,nullptr,FALSE);return 0;
         }
         case WM_MOUSELEAVE:mx_=my_=-1;InvalidateRect(hwnd_,nullptr,FALSE);return 0;
         case WM_LBUTTONUP:{
-            RECT rc{};GetClientRect(hwnd_,&rc);
-            float x=float(GET_X_LPARAM(lp))*W/std::max(1L,rc.right);
-            float y=float(GET_Y_LPARAM(lp))*H/std::max(1L,rc.bottom);
+            float x=float(GET_X_LPARAM(lp))/scale_;
+            float y=float(GET_Y_LPARAM(lp))/scale_;
             if(!busy_)for(auto hit:hits_)if(hit.enabled && hit.rect.contains(x,y)){
                 Click(hit.id);break;
             }
             return 0;
         }
-        case WM_COMMAND:
-            if(LOWORD(wp)==kPathId && HIWORD(wp)==EN_CHANGE && !suppressChange_ && !busy_){
-                ready_=false; selected_.clear();modified_=false;actual_=security::Status{};
+        case WM_COMMAND:{
+            const UINT id=LOWORD(wp),code=HIWORD(wp);
+            if(id==kPathId && code==EN_CHANGE && !suppressChange_ && !busy_){
+                ready_=false;selected_.clear();modified_=false;actual_=security::Status{};
                 draftAcl_=draftSystem_=draftHidden_=false;
-                notice_=L"路径已修改。请点击“载入目录”，再配置权限。";
-                InvalidateRect(hwnd_,nullptr,FALSE);
+                notice_=L"路径已修改。按 Enter 载入，再设置权限。";
+                SyncControls();InvalidateRect(hwnd_,nullptr,FALSE);
+            }else if(code==BN_CLICKED && !busy_){
+                if(id==kBrowseId)Browse();
+                else if(id==kRefreshId)Refresh();
+                else if(id==kAclId)Click(Control::Acl);
+                else if(id==kSystemId)Click(Control::System);
+                else if(id==kHiddenId)Click(Control::Hidden);
             }
             return 0;
+        }
+        case WM_CTLCOLORSTATIC:{
+            auto dc=reinterpret_cast<HDC>(wp);
+            SetBkColor(dc,RGB(255,255,255));
+            SetTextColor(dc,RGB(38,55,80));
+            return reinterpret_cast<LRESULT>(checkBrush_);
+        }
         case WM_CTLCOLOREDIT:{
             auto dc=reinterpret_cast<HDC>(wp);
             SetTextColor(dc,RGB(32,48,76));SetBkColor(dc,RGB(248,250,253));
@@ -203,11 +280,16 @@ private:
         }
         return DefWindowProcW(hwnd_,msg,wp,lp);
     }
-    void LayoutEdit(){
+    void LayoutControls(){
         if(!edit_)return;
-        RECT rc{};GetClientRect(hwnd_,&rc);
-        float sx=float(rc.right)/W,sy=float(rc.bottom)/H;
-        MoveWindow(edit_,int(66*sx),int(175*sy),int(632*sx),int(37*sy),TRUE);
+        const float w=Width();
+        const float col=(w-88.f)/3.f;
+        Place(edit_,44,117,w-194,31);
+        Place(browse_,w-136,117,92,31);
+        Place(refresh_,w-136,196,92,28);
+        Place(acl_,48,354,col-15,26);
+        Place(sys_,48+col,354,col-15,26);
+        Place(hidden_,48+col*2,354,col-15,26);
     }
     std::wstring EditPath()const{
         int len=GetWindowTextLengthW(edit_);
@@ -224,6 +306,7 @@ private:
         draftSystem_=ready_ && actual_.system;
         draftHidden_=ready_ && actual_.hidden;
         modified_=false;
+        SyncControls();
     }
     void Refresh(){
         if(!ready_)return;
@@ -237,7 +320,7 @@ private:
     }
     void LoadSelected(bool prompt){
         std::wstring path=EditPath();
-        if(path.empty()){notice_=L"请先选择文件夹。";ready_=false;InvalidateRect(hwnd_,nullptr,FALSE);return;}
+        if(path.empty()){notice_=L"请先选择文件夹。";ready_=false;AdoptActual();InvalidateRect(hwnd_,nullptr,FALSE);return;}
         auto checked=security::PrepareDirectory(path,false);
         if(!checked.ok && prompt && checked.message==L"目录不存在。"){
             if(MessageBoxW(hwnd_,L"目录不存在，是否创建新目录？",L"创建目标文件夹",
@@ -277,10 +360,7 @@ private:
         if(id==Control::GitHub){
             ShellExecuteW(hwnd_,L"open",kGitHub,nullptr,nullptr,SW_SHOWNORMAL);return;
         }
-        if(id==Control::Browse){Browse();return;}
-        if(id==Control::Load){LoadSelected(true);return;}
         if(!ready_||busy_)return;
-        if(id==Control::Refresh){Refresh();return;}
         if(id==Control::Acl){
             draftAcl_=!draftAcl_;
             if(draftAcl_)draftSystem_=true; // Legacy invariant: quick lock auto-adds +S.
@@ -297,7 +377,7 @@ private:
                   (draftAcl_ && !actual_.denyDelete);
         notice_=modified_?L"设置已预选，磁盘状态尚未更改；点击红色“应用设置”后生效。":
                          L"设置项已与磁盘实际状态对齐。";
-        success_=true;InvalidateRect(hwnd_,nullptr,FALSE);
+        success_=true;SyncControls();InvalidateRect(hwnd_,nullptr,FALSE);
     }
     void ApplyDraft(){
         if(!ready_||busy_)return;
@@ -305,7 +385,7 @@ private:
         if(desiredAcl && !desiredSystem){
             MessageBoxW(hwnd_,L"快速 ACL 加锁会自动添加系统属性 +S。",
                         L"FolderGuard",MB_ICONINFORMATION);
-            draftSystem_=true;return;
+            draftSystem_=true;SyncControls();InvalidateRect(hwnd_,nullptr,FALSE);return;
         }
         if(actual_.aclProtected!=desiredAcl || (desiredAcl && !actual_.denyDelete)){
             const wchar_t* warning=desiredAcl?
@@ -314,7 +394,7 @@ private:
             if(MessageBoxW(hwnd_,warning,L"权限变更确认",
                 MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES)return;
         }
-        busy_=true;EnableWindow(edit_,FALSE);
+        busy_=true;EnableWindow(edit_,FALSE);SyncControls();
         notice_=L"正在写入 NTFS 设置，请勿关闭程序…";
         InvalidateRect(hwnd_,nullptr,FALSE);
         const auto path=selected_;const auto notify=hwnd_;
@@ -381,72 +461,59 @@ private:
     void Button(Control id,Rect r,const std::wstring& label,bool enabled,bool primary=false){
         hits_.push_back({id,r,enabled});
         const bool hover=enabled && r.contains(mx_,my_) && !busy_;
-        unsigned bg=enabled?(primary?(hover?0xAE2E3A:0xCA3E48):(hover?0xE8F0FD:0xF9FBFF)):0xE9EDF3;
-        Shape(r,bg,10,primary?0:enabled?0xD9E2EF:0xE1E6ED);
-        Text(label,{r.x+10,r.y+8,r.w-20,r.h-10},bold_.Get(),
+        const unsigned bg=enabled?(primary?(hover?0xAE2E3A:0xC73F4A):0xF9FBFF):0xE9EDF3;
+        Shape(r,bg,9,primary?0:0xD9E2EF);
+        Text(label,{r.x+10,r.y+10,r.w-20,r.h-12},bold_.Get(),
              enabled?(primary?0xFFFFFF:0x355273):0xA9B3C0,DWRITE_TEXT_ALIGNMENT_CENTER);
     }
     void Chip(Rect r,const std::wstring& label,bool on){
-        Shape(r,on?0xE8F7F0:0xF3F5F8,11,on?0xC5E7D5:0xE3E8EE);
-        Dot(r.x+20,r.y+23,5,on?0x20936C:0xB4BCC8);
-        Text(label,{r.x+34,r.y+9,r.w-43,24},small_.Get(),on?0x277454:0x65758B);
-        Text(on?L"已开启":L"未开启",{r.x+34,r.y+30,r.w-43,22},tiny_.Get(),on?0x288763:0x8491A1);
-    }
-    void Option(Control id,Rect r,const std::wstring& title,const std::wstring& subtitle,bool on){
-        const bool enabled=ready_&&!busy_;
-        hits_.push_back({id,r,enabled});
-        bool hover=enabled && r.contains(mx_,my_);
-        Shape(r,!enabled?0xF3F5F8:on?0xEAF2FF:(hover?0xF7FAFF:0xFFFFFF),
-            12,!enabled?0xE7EBF0:on?0x7CA5E8:0xDAE2EC);
-        Dot(r.x+21,r.y+28,9,!enabled?0xC7CDD5:on?0x386BCE:0xA6B2C2);
-        Text(on?L"✓":L"",{r.x+12,r.y+16,18,24},bold_.Get(),0xFFFFFF);
-        Text(title,{r.x+42,r.y+12,r.w-50,26},bold_.Get(),!enabled?0xA3ADBA:0x263955);
-        Text(subtitle,{r.x+17,r.y+47,r.w-26,28},small_.Get(),!enabled?0xADB5C0:0x79889B);
+        Shape(r,ready_?(on?0xEAF7F1:0xF4F6F9):0xF6F7FA,9,
+              ready_?(on?0xC8E8D8:0xE2E7ED):0xEBEDF1);
+        Dot(r.x+14,r.y+16,4.5f,ready_?(on?0x239469:0xB4BCC8):0xC9CED5);
+        Text(label,{r.x+25,r.y+6,r.w-32,22},small_.Get(),0x506179);
+        Text(!ready_?L"—":on?L"已开启":L"未开启",
+             {r.x+25,r.y+25,r.w-32,20},tiny_.Get(),ready_&&on?0x288763:0x8491A1);
     }
     void Draw(){
         if(!EnsureRenderTarget())return;
-        RECT rc{};GetClientRect(hwnd_,&rc);
+        const float w=Width(),h=Height();
+        const float margin=22.f,cardW=w-2*margin;
         target_->BeginDraw();
-        target_->SetTransform(D2D1::Matrix3x2F::Scale(float(rc.right)/W,float(rc.bottom)/H));
+        // A single DPI scale is applied to both axes: never stretch the interface.
+        target_->SetTransform(D2D1::Matrix3x2F::Scale(scale_,scale_));
         target_->Clear(Color(0xF4F7FB));hits_.clear();
-        Text(L"FolderGuard",{42,27,390,45},hero_.Get(),0x20344F);
-        Text(L"文件夹权限与属性管理",{44,73,465,30},body_.Get(),0x7B8B9E);
-        Button(Control::Refresh,{825,42,132,43},L"↻  刷新状态",ready_&&!busy_);
 
-        Shape({42,114,916,123},0xFFFFFF,16,0xE1E7F0);
-        Text(L"目标文件夹",{65,131,230,30},section_.Get(),0x263B59);
-        Text(L"支持 NTFS · 不会自动扫描其他文件夹",{640,134,293,26},small_.Get(),0x8896A8,DWRITE_TEXT_ALIGNMENT_TRAILING);
-        Shape({65,170,640,48},0xF8FAFD,10,0xDCE5EF);
-        Button(Control::Load,{715,170,109,47},L"载入目录",!busy_);
-        Button(Control::Browse,{839,170,97,47},L"浏览…",!busy_);
+        Text(L"FolderGuard",{26,18,300,34},hero_.Get(),0x20344F);
+        Text(L"文件夹权限与属性管理",{27,52,w-55,21},small_.Get(),0x74869B);
 
-        Shape({42,252,916,131},0xFFFFFF,16,0xE1E7F0);
-        Text(L"当前保护状态",{65,266,250,31},section_.Get(),0x263B59);
-        Text(ready_?L"以下四项均为磁盘当前实际状态":L"未载入目录，权限操作暂不可用",
-            {486,270,450,25},small_.Get(),0x8292A6,DWRITE_TEXT_ALIGNMENT_TRAILING);
-        float gap=12,chipW=(870.f-3*gap)/4.f;
-        Chip({65,307,chipW,59},L"ACL 权限保护",ready_ && actual_.aclProtected);
-        Chip({65+chipW+gap,307,chipW,59},L"禁止删除规则",ready_ && actual_.denyDelete);
-        Chip({65+(chipW+gap)*2,307,chipW,59},L"系统属性 +S",ready_ && actual_.system);
-        Chip({65+(chipW+gap)*3,307,chipW,59},L"隐藏属性 +H",ready_ && actual_.hidden);
+        Shape({margin,79,cardW,95},0xFFFFFF,12,0xE0E7F0);
+        Text(L"目标文件夹",{43,87,160,24},section_.Get(),0x263B59);
+        Text(notice_,{44,153,w-88,18},tiny_.Get(),success_?0x72879D:0xB44B55);
 
-        Shape({42,397,916,149},0xFFFFFF,16,0xE1E7F0);
-        Text(L"设置选项",{65,410,250,31},section_.Get(),0x263B59);
-        Text(modified_?L"有未应用的变更":L"选项与当前状态同步",
-             {693,415,244,27},small_.Get(),modified_?0xB64D54:0x7D91A6,DWRITE_TEXT_ALIGNMENT_TRAILING);
-        float wOpt=(870.f-24.f)/3.f;
-        Option(Control::Acl,{65,454,wOpt,73},L"快速 ACL 保护",L"限制顶层目录 + 拒绝删除",draftAcl_);
-        Option(Control::System,{65+wOpt+12,454,wOpt,73},L"系统属性 +S",L"ACL 加锁时会自动启用",draftSystem_);
-        Option(Control::Hidden,{65+(wOpt+12)*2,454,wOpt,73},L"隐藏属性 +H",L"默认不在资源管理器显示",draftHidden_);
+        Shape({margin,186,cardW,112},0xFFFFFF,12,0xE0E7F0);
+        Text(L"当前保护状态",{43,196,240,27},section_.Get(),0x263B59);
+        const float gap=9.f,chipW=(w-88.f-3*gap)/4.f;
+        Chip({44,235,chipW,51},L"ACL 权限",ready_&&actual_.aclProtected);
+        Chip({44+chipW+gap,235,chipW,51},L"禁止删除",ready_&&actual_.denyDelete);
+        Chip({44+(chipW+gap)*2,235,chipW,51},L"系统属性 +S",ready_&&actual_.system);
+        Chip({44+(chipW+gap)*3,235,chipW,51},L"隐藏属性 +H",ready_&&actual_.hidden);
 
-        Button(Control::Apply,{42,560,916,60},
+        Shape({margin,310,cardW,99},0xFFFFFF,12,0xE0E7F0);
+        Text(L"设置选项",{43,321,180,27},section_.Get(),0x263B59);
+        Text(modified_?L"有未应用的更改":L"与磁盘实际状态同步",
+             {w-260,322,215,24},small_.Get(),modified_?0xB74B58:0x8193A6,
+             DWRITE_TEXT_ALIGNMENT_TRAILING);
+        const float col=(w-88.f)/3.f;
+        Text(L"顶层目录 ACL / 禁止删除",{49,381,col-12,22},tiny_.Get(),0x7C8B9F);
+        Text(L"ACL 加锁时自动启用",{49+col,381,col-12,22},tiny_.Get(),0x7C8B9F);
+        Text(L"影响资源管理器显示",{49+col*2,381,col-12,22},tiny_.Get(),0x7C8B9F);
+
+        Button(Control::Apply,{margin,h-79,cardW,45},
                busy_?L"正在应用设置…":L"应用设置",ready_&&!busy_,true);
-        Shape({42,629,916,35},success_?0xEDF5F1:0xFFF0F0,9);
-        Text(notice_,{55,637,730,23},small_.Get(),success_?0x427461:0xA84B55);
-        Text(L"v3.2.0  ·  Windows 7 / 10",{42,665,380,20},tiny_.Get(),0x93A1B0);
-        hits_.push_back({Control::GitHub,{790,662,168,20},true});
-        Text(L"GitHub  /  mrgolftech ↗",{777,663,181,21},small_.Get(),
-             0x3768C1,DWRITE_TEXT_ALIGNMENT_TRAILING);
+        Text(L"v3.3.0  ·  Windows 7 / 10",{26,h-24,310,20},tiny_.Get(),0x8D9CAF);
+        hits_.push_back({Control::GitHub,{w-193,h-29,167,27},true});
+        Text(L"GitHub / mrgolftech ↗",{w-217,h-25,190,21},tiny_.Get(),
+             0x396ABC,DWRITE_TEXT_ALIGNMENT_TRAILING);
         if(FAILED(target_->EndDraw()))target_.Reset();
     }
 };
