@@ -1,4 +1,4 @@
-name: Native Win7/Win10 Builds
+name: FolderGuard v0.0.1 Windows NTFS Validation
 on:
   push:
     branches: [main]
@@ -23,11 +23,12 @@ jobs:
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A ${{ matrix.platform }}
       - name: Build Release
         run: cmake --build build --config Release --parallel
-      - name: Run NTFS security smoke tests
+      # These commands mutate actual NTFS ACLs and attributes only in disposable
+      # %TEMP% test directories; the Windows runner is a VM, not a Win7 physical PC.
+      - name: Run four-control NTFS security smoke tests
         run: ctest --test-dir build -C Release --verbose
-      - name: Exercise GUI controls on disposable directory
-        if: matrix.platform == 'x64'
-        timeout-minutes: 3
+      - name: Exercise four GUI switches on live NTFS folder
+        timeout-minutes: 5
         shell: pwsh
         run: ./tests/GuiInteraction.ps1
       - name: Capture real GUI screenshot (best effort)
@@ -37,7 +38,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always() && matrix.platform == 'x64'
         with:
-          name: FolderGuard-v3-GUI-Screenshots
+          name: FolderGuard-v0.0.1-GUI-Screenshots
           path: artifacts/
           if-no-files-found: warn
       - name: Check EXE and report size
@@ -49,6 +50,6 @@ jobs:
           Write-Host "${{ matrix.platform }}: $size bytes ($([math]::Round($size/1MB, 2)) MiB)"
       - uses: actions/upload-artifact@v4
         with:
-          name: FolderGuard-v3-${{ matrix.platform }}
+          name: FolderGuard-v0.0.1-${{ matrix.platform }}
           path: build/Release/FolderGuard.exe
           if-no-files-found: error
