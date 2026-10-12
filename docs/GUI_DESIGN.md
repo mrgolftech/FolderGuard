@@ -1,7 +1,7 @@
 # FolderGuard v3 native desktop design
 
 ## Intent
-A lightweight, no-WebView, no-.NET desktop utility for protecting **user-created NTFS data folders**. Win7 SP1 and Windows 10 are targets. The UI is drawn by Direct2D 1.0 with DirectWrite; only the path edit box is a native Win32 control, retaining IME, keyboard editing, selection and clipboard behavior.
+A lightweight, no-WebView, no-.NET desktop utility for protecting **user-created NTFS data folders**. Win7 SP1 and Windows 10 are targets. The GUI uses a hybrid design: native Win32 EDIT, BUTTON and AUTOCHECKBOX controls for accessible standard input, plus Direct2D 1.0 / DirectWrite for status summaries and a single red Apply button. The native edit preserves IME, selection and clipboard behavior. Browsing auto-loads folders, and Enter loads typed paths.
 
 ## Technical decisions
 - C++17 + classic Win32 message loop; `ID2D1HwndRenderTarget` and `IDWriteFactory` (Windows 7 baseline).
@@ -10,8 +10,8 @@ A lightweight, no-WebView, no-.NET desktop utility for protecting **user-created
 - UAC `requireAdministrator` application manifest. GUI launch requires an administrator approval each time; while ACL reading can be unprivileged, this first delivery intentionally keeps the process elevated to simplify modifications.
 - Dedicated worker thread for ACL operations, completion via `PostMessageW`; indeterminate bar, elapsed milliseconds, no UI thread blocking.
 - Distinct operation confirmation for destructive full ACL changes; no file delete or move buttons.
-- Readable, light high-contrast design with rounded surfaces, concise state labels and native path selection.
-- Logical 1180x820 viewport scales to client area (Windows 7-compatible DPI API). First version uses non-uniform scaling and should be visually tested across common screen sizes.
+- Readable, light compact layout with native file browsing, edit, refresh and checkbox widgets, plus rounded status surfaces.
+- Compact 760x510 logical viewport; a uniform X/Y scale determined from system DPI (GetDeviceCaps LOGPIXELSX) and desktop work area. Native controls are anchored/relaid out on WM_SIZE, while Direct2D uses a matching uniform transform. No Win8+ DPI API is required. Windows 7 SP1 x86/x64 still needs real-machine validation.
 
 ## Security architecture
 - **Fast lock:** replace root DACL with explicit deny `Authenticated Users: DELETE | FILE_DELETE_CHILD`, allow `Administrators` and `SYSTEM` all access. Deny not inherited. Root inheritance disabled. Automatically set `+S`.
