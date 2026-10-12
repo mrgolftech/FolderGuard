@@ -138,7 +138,7 @@ public:
         cls.hIcon = LoadIconW(nullptr, IDI_SHIELD);
         cls.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH));
         if (!RegisterClassExW(&cls)) return false;
-        hwnd_ = CreateWindowExW(0, kClass, L"FolderGuard 3.0 — 文件保护工作台",
+        hwnd_ = CreateWindowExW(0, kClass, L"FolderGuard 3.1 — 文件保护工作台",
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT,
                 1180, 835, nullptr, nullptr, instance, this);
         if (!hwnd_) return false;
