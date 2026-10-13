@@ -185,16 +185,22 @@ bool IsDeleteAce(const void* ace,PSID auth,bool exact) {
 // may still grant ordinary users access, so displaying them as locked is unsafe.
 bool IsFolderGuardRestrictedAcl(PACL acl) {
     if (!acl) return false;  // A NULL DACL grants unrestricted access.
-    std::vector<BYTE> admins, system;
+    std::vector<BYTE> admins, system, auth;
     if (!MakeSid(WinBuiltinAdministratorsSid, admins) ||
-        !MakeSid(WinLocalSystemSid, system)) return false;
+        !MakeSid(WinLocalSystemSid, system) ||
+        !MakeSid(WinAuthenticatedUserSid, auth)) return false;
     bool hasAdmins = false, hasSystem = false;
     for (DWORD i = 0; i < acl->AceCount; ++i) {
         void* ace = nullptr;
         if (!GetAce(acl, i, &ace)) return false;
         const auto* header = static_cast<const ACE_HEADER*>(ace);
         if (header->AceFlags & INHERIT_ONLY_ACE) continue;
-        if (header->AceType == ACCESS_DENIED_ACE_TYPE) continue;
+        // An unrelated deny ACE could also block Administrators/SYSTEM.
+        // Only the tool-owned, root-only delete restriction is expected.
+        if (header->AceType == ACCESS_DENIED_ACE_TYPE) {
+            if (!IsDeleteAce(ace, auth.data(), true)) return false;
+            continue;
+        }
         if (header->AceType != ACCESS_ALLOWED_ACE_TYPE ||
             (header->AceFlags & INHERITED_ACE)) return false;
         const auto* allowed = static_cast<const ACCESS_ALLOWED_ACE*>(ace);
@@ -335,8 +341,13 @@ Status ReadStatus(const std::wstring& input) {
     if (err != ERROR_SUCCESS) { s.error = L"读取 ACL 失败：" + ErrorText(err); return s; }
     SECURITY_DESCRIPTOR_CONTROL control = {};
     DWORD revision = 0;
-    if (GetSecurityDescriptorControl(descriptor, &control, &revision))
-        s.aclProtected = (control & SE_DACL_PROTECTED) != 0 && IsFolderGuardRestrictedAcl(acl);
+    if (!GetSecurityDescriptorControl(descriptor, &control, &revision)) {
+        s.error = L"读取 DACL 继承状态失败：" + ErrorText(GetLastError());
+        LocalFree(descriptor);
+        return s;
+    }
+    s.aclInheritanceDisabled = (control & SE_DACL_PROTECTED) != 0;
+    s.aclProtected = s.aclInheritanceDisabled && IsFolderGuardRestrictedAcl(acl);
     std::vector<BYTE> auth;
     if (MakeSid(WinAuthenticatedUserSid, auth) && acl) {
         for (DWORD i = 0; i < acl->AceCount; ++i) {
@@ -429,44 +440,91 @@ std::wstring DescribeAcl(const std::wstring& input) {
     return report;
 }
 
+// Verify each action against a fresh filesystem read, and reject unintended
+// changes to independent switches. A successful Win32 API return is not proof
+// that the requested DACL / attribute state was persisted.
+Result VerifyApplied(const Status& before, const Status& after, Action action) {
+    if (!after.error.empty()) return {false,L"写入后无法重新读取目录状态：" + after.error};
+    const bool attributesPreserved = before.hidden == after.hidden;
+    const bool aclPreserved = before.aclInheritanceDisabled == after.aclInheritanceDisabled &&
+                              before.aclProtected == after.aclProtected;
+    const bool denyPreserved = before.denyDelete == after.denyDelete;
+    const bool sysPreserved = before.system == after.system;
+    bool correct = false;
+    switch (action) {
+    case Action::AclProtectOn:
+        correct = after.aclInheritanceDisabled && after.aclProtected &&
+                  denyPreserved && sysPreserved && attributesPreserved; break;
+    case Action::AclProtectOff:
+        correct = !after.aclInheritanceDisabled && !after.aclProtected &&
+                  denyPreserved && sysPreserved && attributesPreserved; break;
+    case Action::DenyDeleteOn:
+        correct = after.denyDelete && aclPreserved && sysPreserved && attributesPreserved; break;
+    case Action::DenyDeleteOff:
+        correct = !after.denyDelete && aclPreserved && sysPreserved && attributesPreserved; break;
+    case Action::SystemOn:
+        correct = after.system && attributesPreserved && denyPreserved && aclPreserved; break;
+    case Action::SystemOff:
+        correct = !after.system && attributesPreserved && denyPreserved && aclPreserved; break;
+    case Action::HiddenOn:
+        correct = after.hidden && sysPreserved && denyPreserved && aclPreserved; break;
+    case Action::HiddenOff:
+        correct = !after.hidden && sysPreserved && denyPreserved && aclPreserved; break;
+    case Action::QuickLock:
+    case Action::FullLock:
+        correct = after.aclInheritanceDisabled && after.aclProtected &&
+                  after.denyDelete && after.system && attributesPreserved; break;
+    case Action::QuickUnlock:
+    case Action::FullUnlock:
+        correct = !after.aclInheritanceDisabled && !after.aclProtected &&
+                  !after.denyDelete && sysPreserved && attributesPreserved; break;
+    }
+    if (!correct)
+        return {false,L"写入后的 NTFS 核验失败：实际 ACL/禁止删除/+S/+H 状态与预期不符，"
+                      L"或其他独立选项被意外改变。磁盘可能已部分修改，请刷新状态检查。"};
+    return {true,L"设置写入成功，且已从 NTFS 重新读取并验证。"};
+}
+
 Result Apply(const std::wstring& input, Action action) {
     const auto p = Canonical(input);
     auto guarded = Guard(p, false);
     if (!guarded.ok) return guarded;
     if (!IsAdministrator()) return {false, L"请以管理员身份启动 FolderGuard。"};
-    Result r;
+    const Status before = ReadStatus(p);
+    if (!before.error.empty()) return {false,L"写入前读取目录状态失败：" + before.error};
+    Result r{false,L"未知操作。"};
     switch (action) {
-    case Action::AclProtectOn: return ToggleAclInheritance(p,true);
-    case Action::AclProtectOff: return ToggleAclInheritance(p,false);
-    case Action::DenyDeleteOn: return ToggleDeleteAce(p,true);
-    case Action::DenyDeleteOff: return ToggleDeleteAce(p,false);
-    case Action::SystemOn: return Attributes(p, FILE_ATTRIBUTE_SYSTEM, true);
-    case Action::SystemOff: return Attributes(p, FILE_ATTRIBUTE_SYSTEM, false);
-    case Action::HiddenOn: return Attributes(p, FILE_ATTRIBUTE_HIDDEN, true);
-    case Action::HiddenOff: return Attributes(p, FILE_ATTRIBUTE_HIDDEN, false);
+    case Action::AclProtectOn: r=ToggleAclInheritance(p,true); break;
+    case Action::AclProtectOff: r=ToggleAclInheritance(p,false); break;
+    case Action::DenyDeleteOn: r=ToggleDeleteAce(p,true); break;
+    case Action::DenyDeleteOff: r=ToggleDeleteAce(p,false); break;
+    case Action::SystemOn: r=Attributes(p, FILE_ATTRIBUTE_SYSTEM, true); break;
+    case Action::SystemOff: r=Attributes(p, FILE_ATTRIBUTE_SYSTEM, false); break;
+    case Action::HiddenOn: r=Attributes(p, FILE_ATTRIBUTE_HIDDEN, true); break;
+    case Action::HiddenOff: r=Attributes(p, FILE_ATTRIBUTE_HIDDEN, false); break;
     case Action::QuickLock:
-        r = LockRoot(p, false);
-        if (!r.ok) return r;
-        return Attributes(p, FILE_ATTRIBUTE_SYSTEM, true);
+        r=LockRoot(p,false);
+        if(r.ok)r=Attributes(p,FILE_ATTRIBUTE_SYSTEM,true);
+        break;
     case Action::QuickUnlock:
-        r = RunIcacls(p, L"/inheritance:e /q");
-        if (!r.ok) return r;
-        return RunIcacls(p, L"/reset /q");
+        r=RunIcacls(p,L"/inheritance:e /q");
+        if(r.ok)r=RunIcacls(p,L"/reset /q");
+        break;
     case Action::FullLock: {
         std::wstring bad;
         if (ReparseInTree(p, bad)) return {false, L"发现链接/联接点，已中止：" + bad};
-        r = LockRoot(p, true);
-        if (!r.ok) return r;
-        r = Attributes(p, FILE_ATTRIBUTE_SYSTEM, true);
-        if (!r.ok) return r;
-        // Only descendants: resetting root itself would remove the just-installed locked DACL.
-        return RunIcacls(p + L"\\*", L"/reset /t /c /q");
+        r=LockRoot(p,true);
+        if(r.ok)r=Attributes(p,FILE_ATTRIBUTE_SYSTEM,true);
+        if(r.ok)r=RunIcacls(p + L"\\*", L"/reset /t /c /q");
+        break;
     }
     case Action::FullUnlock:
-        r = RunIcacls(p, L"/inheritance:e /q");
-        if (!r.ok) return r;
-        return RunIcacls(p, L"/reset /t /c /q");
+        r=RunIcacls(p,L"/inheritance:e /q");
+        if(r.ok)r=RunIcacls(p,L"/reset /t /c /q");
+        break;
     }
-    return {false, L"未知操作。"};
+    if(!r.ok)return r;
+    const Result check=VerifyApplied(before,ReadStatus(p),action);
+    return check.ok?Result{true,r.message+L" " + check.message}:check;
 }
 } // namespace security

@@ -184,15 +184,50 @@ int wmain(){
    Check(aclRead==ERROR_SUCCESS && aclWrite==ERROR_SUCCESS,
          L"Create pre-protected but not FolderGuard-locked ACL");
    unicodeStatus=security::ReadStatus(unicodeDir);
-   Check(!unicodeStatus.aclProtected,
+   Check(unicodeStatus.aclInheritanceDisabled && !unicodeStatus.aclProtected,
          L"Do not mistake inheritance-disabled Unicode ACL for actual lock");
    a=security::Apply(unicodeDir,security::Action::AclProtectOn);
    unicodeStatus=security::ReadStatus(unicodeDir);
    Check(a.ok && unicodeStatus.aclProtected && RootAclOnlyAdminSystem(unicodeDir),
          L"Unicode ACL ON sets verified Administrators/SYSTEM-only root DACL");
+   // An unexpected root deny ACE makes the ACL unsuitable for a green
+   // FolderGuard lock indicator, even if Admin/SYSTEM allow entries exist.
+   std::vector<BYTE> worldSid(SECURITY_MAX_SID_SIZE);
+   DWORD worldBytes=static_cast<DWORD>(worldSid.size());
+   PSECURITY_DESCRIPTOR oldSd=nullptr;
+   PACL oldAcl=nullptr, modifiedAcl=nullptr;
+   DWORD readAcl=GetNamedSecurityInfoW(const_cast<LPWSTR>(unicodeDir.c_str()),
+       SE_FILE_OBJECT,DACL_SECURITY_INFORMATION,nullptr,nullptr,&oldAcl,nullptr,&oldSd);
+   DWORD inject=ERROR_INVALID_DATA;
+   if(readAcl==ERROR_SUCCESS && CreateWellKnownSid(WinWorldSid,nullptr,worldSid.data(),&worldBytes)){
+       EXPLICIT_ACCESSW x={};
+       x.grfAccessPermissions=FILE_READ_DATA;
+       x.grfAccessMode=DENY_ACCESS;
+       x.grfInheritance=NO_INHERITANCE;
+       x.Trustee.TrusteeForm=TRUSTEE_IS_SID;
+       x.Trustee.TrusteeType=TRUSTEE_IS_WELL_KNOWN_GROUP;
+       x.Trustee.ptstrName=reinterpret_cast<LPWSTR>(worldSid.data());
+       inject=SetEntriesInAclW(1,&x,oldAcl,&modifiedAcl);
+       if(inject==ERROR_SUCCESS){
+           auto mutableName=unicodeDir;
+           inject=SetNamedSecurityInfoW(&mutableName[0],SE_FILE_OBJECT,
+               DACL_SECURITY_INFORMATION|PROTECTED_DACL_SECURITY_INFORMATION,
+               nullptr,nullptr,modifiedAcl,nullptr);
+       }
+   }
+   if(modifiedAcl)LocalFree(modifiedAcl);
+   if(oldSd)LocalFree(oldSd);
+   Check(inject==ERROR_SUCCESS,L"Inject unexpected deny ACE on disposable Unicode directory");
+   unicodeStatus=security::ReadStatus(unicodeDir);
+   Check(unicodeStatus.aclInheritanceDisabled && !unicodeStatus.aclProtected,
+         L"Unexpected deny ACE cannot masquerade as verified FolderGuard ACL");
+   a=security::Apply(unicodeDir,security::Action::AclProtectOn);
+   Check(a.ok && security::ReadStatus(unicodeDir).aclProtected,
+         L"ACL ON repairs a non-conforming protected DACL and verifies readback");
    b=security::Apply(unicodeDir,security::Action::AclProtectOff);
    unicodeStatus=security::ReadStatus(unicodeDir);
-   Check(b.ok && !unicodeStatus.aclProtected,L"Unicode ACL OFF restores inheritance");
+   Check(b.ok && !unicodeStatus.aclProtected && !unicodeStatus.aclInheritanceDisabled,
+         L"Unicode ACL OFF actually restores inheritance bit");
    a=security::Apply(unicodeDir,security::Action::DenyDeleteOn);
    unicodeStatus=security::ReadStatus(unicodeDir);
    Check(a.ok && unicodeStatus.denyDelete && TargetAclDeniesDelete(unicodeDir),
@@ -217,8 +252,8 @@ int wmain(){
          L"Unicode full lock preserves nested CJK file");
    b=security::Apply(unicodeDir,security::Action::FullUnlock);
    unicodeStatus=security::ReadStatus(unicodeDir);
-   Check(b.ok && !unicodeStatus.aclProtected,
-         L"Unicode full unlock resets directory via icacls.exe");
+   Check(b.ok && !unicodeStatus.aclProtected && !unicodeStatus.aclInheritanceDisabled,
+         L"Unicode full unlock resets real inheritance bit via icacls.exe");
    const DWORD unicodeAttributes=GetFileAttributesW(unicodeDir.c_str());
    if(unicodeAttributes!=INVALID_FILE_ATTRIBUTES)
        SetFileAttributesW(unicodeDir.c_str(),unicodeAttributes&~(FILE_ATTRIBUTE_SYSTEM|FILE_ATTRIBUTE_HIDDEN));

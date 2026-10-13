@@ -13,6 +13,8 @@ struct Status {
     bool ntfs = false;
     bool system = false;
     bool hidden = false;
+    // Raw Windows inheritance flag, distinct from verified FolderGuard policy.
+    bool aclInheritanceDisabled = false;
     bool aclProtected = false;
     bool denyDelete = false;
     std::wstring error;
