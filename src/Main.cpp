@@ -87,7 +87,7 @@ public:
         constexpr DWORD style=WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN;
         RECT outer={0,0,Px(W),Px(H)};
         AdjustWindowRectEx(&outer,style,FALSE,0);
-        hwnd_=CreateWindowExW(0,kClass,L"FolderGuard 0.0.1 — 文件夹保护",
+        hwnd_=CreateWindowExW(0,kClass,L"FolderGuard 0.0.2 — 文件夹保护",
            style,work.left+16,work.top+16,outer.right-outer.left,outer.bottom-outer.top,
            nullptr,nullptr,inst,this);
         if(!hwnd_)return false;
@@ -621,7 +621,7 @@ private:
 
         Button(Control::Apply,{margin,h-82,cardW,44},
                busy_?L"正在应用设置…":L"应用设置",ready_&&!busy_,true);
-        Text(L"v0.0.1  ·  Windows 7 / 10",{24,h-29,310,25},small_.Get(),0x60758F);
+        Text(L"v0.0.2  ·  Windows 7 / 10",{24,h-29,310,25},small_.Get(),0x60758F);
         hits_.push_back({Control::GitHub,{w-209,h-30,188,26},true});
         Text(L"GitHub / mrgolftech ↗",{w-225,h-29,205,25},small_.Get(),
              0x3265AC,DWRITE_TEXT_ALIGNMENT_TRAILING);
