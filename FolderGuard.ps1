@@ -1,5 +1,5 @@
 ﻿#Requires -Version 5.1
-# FolderGuard v2.3 - Windows PowerShell 5.1 - root anti-delete ACL
+# FolderGuard v0.0.2 (legacy CLI v2.3 semantics) - Windows PowerShell 5.1
 # Scope: user-selected NTFS data directory, never the actual Windows Recycle Bin.
 $ErrorActionPreference = 'Stop'
 $script:Target = $null
@@ -239,7 +239,7 @@ function Show-Status {
 }
 while ($true) {
     Clear-Host
-    Write-Host '========== FolderGuard v2.3 ==========' -ForegroundColor Cyan
+    Write-Host '========== FolderGuard v0.0.2 (CLI) ==========' -ForegroundColor Cyan
     Write-Host "当前目录：$(if ($script:Target) { $script:Target } else { '[尚未选择]' })"
     Write-Host '1. 选择 / 创建文件夹'
     Write-Host '2. 完整加锁：递归子文件 + 顶层防删除 +S（较慢）'
