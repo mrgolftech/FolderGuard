@@ -7,6 +7,13 @@ on:
       - 'tests/**'
       - 'CMakeLists.txt'
       - '.github/workflows/native-build.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/native-build.yml'
   workflow_dispatch:
 permissions:
   contents: read

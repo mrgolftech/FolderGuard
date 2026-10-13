@@ -35,7 +35,7 @@ public static class NativeUiTest {
 }
 '@
 $exe=(Resolve-Path 'build/Release/FolderGuard.exe').Path
-$path=Join-Path $env:TEMP ('FolderGuard-GUI-Test-'+$PID)
+$path=Join-Path $env:TEMP ('FolderGuard-GUI-Test-'+$PID+'-中文 文件夹-テスト')
 New-Item -ItemType Directory -Path $path|Out-Null
 $process=$null
 function Assert-Flag($flag,[bool]$expected) {
