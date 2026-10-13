@@ -1,6 +1,6 @@
-# FolderGuard v0.0.1 · 命令行版（PowerShell CLI）
+# FolderGuard v0.0.2 · 命令行版（PowerShell CLI）
 
-此压缩包是 FolderGuard **v0.0.1 产品发布中的命令行版本**。其核心脚本沿用历史 PowerShell v2.3 菜单实现，**不是独立编译的原生 EXE**，操作语义与 GUI v0.0.1 不完全一致。
+此压缩包是 FolderGuard **v0.0.2 产品发布中的命令行版本**。其核心脚本沿用历史 PowerShell v2.3 菜单实现，**不是独立编译的原生 EXE**，操作语义与 GUI v0.0.2 不完全一致。
 
 ## 运行环境
 
