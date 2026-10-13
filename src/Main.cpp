@@ -345,18 +345,25 @@ private:
             actual_=security::ReadStatus(selected_);
             ready_=actual_.exists && actual_.ntfs && actual_.error.empty();
             AdoptActual();
-            success_=out->result.ok;
-            notice_=success_?L"设置已完成，当前状态已从磁盘重新读取。":L"部分操作失败，请检查当前状态。";
+            success_=out->result.ok && ready_;
+            notice_=success_?L"设置已完成，四项状态已经从 NTFS 回读核验。":L"写入或核验失败，请检查当前状态。";
+            if(ready_ && actual_.aclInheritanceDisabled && !actual_.aclProtected)
+                notice_=L"警告：ACL 继承已关闭，但规则并非本工具的受限权限配置。";
             InvalidateRect(hwnd_,nullptr,FALSE);
             std::wstring report=(success_?L"应用完成":L"应用未完全成功");
             report+=L"\r\n\r\n"+out->actions+L"\r\n";
             report+=L"耗时："+std::to_wstring(out->elapsed)+L" 毫秒\r\n";
             report+=L"执行结果："+out->result.message+L"\r\n\r\n";
-            report+=L"实际 ACL："+StateWord(actual_.aclProtected)+
+            report+=L"实际 ACL（已验证规则）："+StateWord(actual_.aclProtected)+
+                    L"\r\n继承关闭状态："+StateWord(actual_.aclInheritanceDisabled)+
                     L"\r\n禁止删除规则："+StateWord(actual_.denyDelete)+
                     L"\r\n系统属性 +S："+StateWord(actual_.system)+
                     L"\r\n隐藏属性 +H："+StateWord(actual_.hidden);
             if(!actual_.error.empty())report+=L"\r\n状态读取："+actual_.error;
+            if(actual_.aclInheritanceDisabled && !actual_.aclProtected)
+                report+=L"\r\n警告：目标 ACL 虽已关闭继承，但规则不符合 FolderGuard 的受限 ACL 策略。";
+            report+=L"\r\n提示：禁止删除 ACE 不保证能阻止父目录 DELETE_CHILD 授权的删除，"
+                    L"管理员及特权操作也不在当前核验范围内。";
             MessageBoxW(hwnd_,report.c_str(),L"FolderGuard · 应用设置结果",
                 MB_OK|(success_?MB_ICONINFORMATION:MB_ICONWARNING));
             return 0;
@@ -405,7 +412,9 @@ private:
         ready_=actual_.exists && actual_.ntfs && actual_.error.empty();
         AdoptActual();
         success_=ready_;
-        notice_=ready_?L"已刷新：设置项与磁盘实际权限和属性保持一致。":
+        notice_=ready_?(actual_.aclInheritanceDisabled && !actual_.aclProtected
+              ? L"警告：ACL 继承已关闭，但实际权限规则不符合 FolderGuard 保护策略。"
+              : L"已刷新：四项状态从磁盘重新读取。"):
              L"刷新失败："+actual_.error;
         InvalidateRect(hwnd_,nullptr,FALSE);
     }
@@ -427,7 +436,9 @@ private:
         actual_=security::ReadStatus(selected_);
         ready_=actual_.exists && actual_.ntfs && actual_.error.empty();
         AdoptActual();
-        notice_=ready_?L"已载入文件夹。更改下方选项后，点击红色按钮应用设置。":
+        notice_=ready_?(actual_.aclInheritanceDisabled && !actual_.aclProtected
+              ? L"警告：该目录 ACL 已关闭继承，但并非 FolderGuard 受限 ACL 配置。"
+              : L"已载入文件夹。更改选项后，点击红色按钮应用设置。"):
             L"无法读取该目录状态："+actual_.error;
         success_=ready_;
         InvalidateRect(hwnd_,nullptr,FALSE);
@@ -481,18 +492,23 @@ private:
         std::thread([path,notify,desiredAcl,desiredDeny,desiredSystem,desiredHidden](){
             const DWORD begin=GetTickCount();
             security::Status state=security::ReadStatus(path);
-            security::Result final{true,L"所有请求的设置均已处理。"};
+            security::Result final{true,L"全部请求已写入且四项 NTFS 状态已核验。"};
             std::wstring operations;
             auto perform=[&](security::Action act,const wchar_t* title){
                 auto r=security::Apply(path,act);
                 operations+=title;
-                operations+=(r.ok?L"：成功\r\n":L"：失败 — "+r.message+L"\r\n");
-                if(!r.ok){final=r;return false;}
-                state=security::ReadStatus(path);
-                if(!state.error.empty()){
-                    final={false,L"重新读取实际状态失败："+state.error};
+                if(!r.ok){
+                    operations+=L"：写入或核验失败 — "+r.message+L"\r\n";
+                    final=r;
                     return false;
                 }
+                state=security::ReadStatus(path);
+                if(!state.error.empty()){
+                    final={false,L"再次读取实际状态失败："+state.error};
+                    operations+=L"：复核失败 — "+final.message+L"\r\n";
+                    return false;
+                }
+                operations+=L"：写入并核验通过\r\n";
                 return true;
             };
             bool ok=state.error.empty();
@@ -507,11 +523,17 @@ private:
                 ok=perform(desiredSystem?security::Action::SystemOn:security::Action::SystemOff,L"系统属性 +S");
             if(ok && state.hidden!=desiredHidden)
                 ok=perform(desiredHidden?security::Action::HiddenOn:security::Action::HiddenOff,L"隐藏属性 +H");
-            if(ok && (state.aclProtected!=desiredAcl || state.denyDelete!=desiredDeny ||
-                      state.system!=desiredSystem || state.hidden!=desiredHidden))
-                final={false,L"实际状态与目标状态不一致，已保留磁盘读取结果。"};
-            if(operations.empty())operations=L"当前状态与目标设置一致，无须更改。\r\n";
-            auto* result=new Outcome{final,security::ReadStatus(path),operations,GetTickCount()-begin};
+            // Independently re-read once after *all* changes, not only per action.
+            auto verified=security::ReadStatus(path);
+            if(verified.error.size())
+                final={false,L"最终回读失败："+verified.error};
+            else if(ok && (verified.aclProtected!=desiredAcl ||
+                           verified.denyDelete!=desiredDeny ||
+                           verified.system!=desiredSystem ||
+                           verified.hidden!=desiredHidden))
+                final={false,L"最终 NTFS 状态与设置目标不一致，不能报告成功。"};
+            if(operations.empty())operations=L"未执行写入操作；当前状态已回读。\r\n";
+            auto* result=new Outcome{final,verified,operations,GetTickCount()-begin};
             if(!PostMessageW(notify,kDone,0,reinterpret_cast<LPARAM>(result)))delete result;
         }).detach();
     }
