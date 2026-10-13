@@ -345,7 +345,15 @@ private:
             actual_=security::ReadStatus(selected_);
             ready_=actual_.exists && actual_.ntfs && actual_.error.empty();
             AdoptActual();
-            success_=out->result.ok && ready_;
+            // A separate final GUI-thread read must agree with the worker's
+            // verified snapshot; concurrent filesystem changes are not success.
+            const bool snapshotStable = actual_.aclInheritanceDisabled==out->after.aclInheritanceDisabled &&
+                actual_.aclProtected==out->after.aclProtected &&
+                actual_.denyDelete==out->after.denyDelete &&
+                actual_.system==out->after.system && actual_.hidden==out->after.hidden;
+            success_=out->result.ok && ready_ && snapshotStable;
+            if(out->result.ok && !success_)
+                out->result={false,L"完成通知时再次回读状态失败或目录状态已变化，请刷新核对。"};
             notice_=success_?L"设置已完成，四项状态已经从 NTFS 回读核验。":L"写入或核验失败，请检查当前状态。";
             if(ready_ && actual_.aclInheritanceDisabled && !actual_.aclProtected)
                 notice_=L"警告：ACL 继承已关闭，但规则并非本工具的受限权限配置。";
