@@ -1,11 +1,11 @@
 # FolderGuard
 
-## v0.0.1 发布版本
+## v0.0.2 发布版本
 
 - **[GUI 版](README-GUI.md)**：C++17 + Win32 + Direct2D，绿色版 `FolderGuard.exe`，分别提供 Windows x86 和 x64 构建。GUI 使用 ACL 权限保护、禁止删除、系统属性 +S、隐藏属性 +H 四项独立开关。
 - **[命令行版](README-CLI.md)**：Windows PowerShell 5.1 中文交互菜单，包含 `FolderGuard.ps1` 与 `Start-FolderGuard.cmd`，无需编译。命令行脚本沿用历史 v2.3 操作语义，**不等同于 GUI 四项独立开关**。
-- **[查看 v0.0.1 GitHub Release 下载](https://github.com/mrgolftech/FolderGuard/releases/tag/v0.0.1)**：提供 GUI x86、GUI x64、CLI PowerShell 三个 ZIP 包及 SHA-256 校验文件。
-- **[版本发布说明](RELEASE_NOTES-v0.0.1.md)** · [GUI 设计说明](docs/GUI_DESIGN.md) · [Windows 验收指南](tests/MACHINE_VALIDATION.md)
+- **[查看 v0.0.2 GitHub Release 下载](https://github.com/mrgolftech/FolderGuard/releases/tag/v0.0.2)**：提供 GUI x86、GUI x64、CLI PowerShell 三个 ZIP 包及 SHA-256 校验文件。
+- **[版本发布说明](RELEASE_NOTES-v0.0.2.md)** · [GUI 设计说明](docs/GUI_DESIGN.md) · [Windows 验收指南](tests/MACHINE_VALIDATION.md)
 
 > 目标 Windows 7 SP1 / Windows 10。GitHub Actions 已在 Windows Server 2022 虚拟机上验证原生 GUI 的 x86/x64 构建及真实 NTFS 状态，**不能视为 Windows 7 32 位实体机验收**。ACL 不是加密；禁止删除不能保证抵挡父目录 `DELETE_CHILD` 权限；请先在空测试目录验证。
 

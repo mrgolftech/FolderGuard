@@ -1,4 +1,4 @@
-# FolderGuard v0.0.1 · Windows 实体机验收指南
+# FolderGuard v0.0.2 · Windows 实体机验收指南
 
 ## 自动化覆盖与限制
 
@@ -10,7 +10,7 @@
 
 ## Windows 7 SP1 32 位实体机步骤
 
-1. 从成功的 GitHub Actions 工作流下载 `FolderGuard-v0.0.1-Win32` 及 `FolderGuard-v0.0.1-Win32-NTFS-Validation`。
+1. 从成功的 GitHub Actions 工作流下载 `FolderGuard-v0.0.2-Win32` 及 `FolderGuard-v0.0.2-Win32-NTFS-Validation`。
 2. 解压 `FolderGuard.exe`、`FolderGuardSmoke.exe` 到独立目录。此验证会修改测试目录 ACL，需以管理员身份启动命令提示符。
 3. 确认测试盘符为 NTFS，在管理员 CMD 中运行：
    ```cmd
