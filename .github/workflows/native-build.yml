@@ -1,4 +1,4 @@
-name: FolderGuard v0.0.1 Windows NTFS Validation
+name: FolderGuard v0.0.2 Windows NTFS Validation
 on:
   push:
     branches: [main]
@@ -45,7 +45,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always() && matrix.platform == 'x64'
         with:
-          name: FolderGuard-v0.0.1-GUI-Screenshots
+          name: FolderGuard-v0.0.2-GUI-Screenshots
           path: artifacts/
           if-no-files-found: warn
       - name: Check EXE and report size
@@ -57,11 +57,11 @@ jobs:
           Write-Host "${{ matrix.platform }}: $size bytes ($([math]::Round($size/1MB, 2)) MiB)"
       - uses: actions/upload-artifact@v4
         with:
-          name: FolderGuard-v0.0.1-${{ matrix.platform }}
+          name: FolderGuard-v0.0.2-${{ matrix.platform }}
           path: build/Release/FolderGuard.exe
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: FolderGuard-v0.0.1-${{ matrix.platform }}-NTFS-Validation
+          name: FolderGuard-v0.0.2-${{ matrix.platform }}-NTFS-Validation
           path: build/Release/FolderGuardSmoke.exe
           if-no-files-found: error
