@@ -156,6 +156,74 @@ int wmain(){
    Check(GetFileAttributesW(file.c_str())!=INVALID_FILE_ATTRIBUTES,
          L"Nested user data survived all four independent toggle cycles");
 
+   // Unicode-path regression: every native API and icacls invocation must
+   // preserve UTF-16 filenames (including CJK text and whitespace).
+   const std::wstring unicodeDir=root+L"\\中文 文件夹-テスト";
+   const std::wstring unicodeChild=unicodeDir+L"\\内部 子目录";
+   const std::wstring unicodeFile=unicodeChild+L"\\资料样例.txt";
+   Check(CreateDirectoryW(unicodeDir.c_str(),nullptr)!=0,L"Create Unicode directory with spaces");
+   Check(CreateDirectoryW(unicodeChild.c_str(),nullptr)!=0,L"Create nested Unicode directory");
+   MakeFile(unicodeFile);
+   Check(GetFileAttributesW(unicodeFile.c_str())!=INVALID_FILE_ATTRIBUTES,
+         L"Create Unicode-named test file");
+   auto unicodeStatus=security::ReadStatus(unicodeDir);
+   Check(unicodeStatus.exists && unicodeStatus.ntfs,L"Read Unicode NTFS folder state");
+   // A pre-existing protected DACL is NOT proof of FolderGuard's restrictive policy.
+   PSECURITY_DESCRIPTOR inheritedSd=nullptr;
+   PACL inheritedAcl=nullptr;
+   DWORD aclRead=GetNamedSecurityInfoW(const_cast<LPWSTR>(unicodeDir.c_str()),
+       SE_FILE_OBJECT,DACL_SECURITY_INFORMATION,nullptr,nullptr,&inheritedAcl,nullptr,&inheritedSd);
+   DWORD aclWrite=ERROR_INVALID_DATA;
+   if(aclRead==ERROR_SUCCESS){
+       auto mutablePath=unicodeDir;
+       aclWrite=SetNamedSecurityInfoW(&mutablePath[0],SE_FILE_OBJECT,
+           DACL_SECURITY_INFORMATION|PROTECTED_DACL_SECURITY_INFORMATION,
+           nullptr,nullptr,inheritedAcl,nullptr);
+   }
+   if(inheritedSd)LocalFree(inheritedSd);
+   Check(aclRead==ERROR_SUCCESS && aclWrite==ERROR_SUCCESS,
+         L"Create pre-protected but not FolderGuard-locked ACL");
+   unicodeStatus=security::ReadStatus(unicodeDir);
+   Check(!unicodeStatus.aclProtected,
+         L"Do not mistake inheritance-disabled Unicode ACL for actual lock");
+   a=security::Apply(unicodeDir,security::Action::AclProtectOn);
+   unicodeStatus=security::ReadStatus(unicodeDir);
+   Check(a.ok && unicodeStatus.aclProtected && RootAclOnlyAdminSystem(unicodeDir),
+         L"Unicode ACL ON sets verified Administrators/SYSTEM-only root DACL");
+   b=security::Apply(unicodeDir,security::Action::AclProtectOff);
+   unicodeStatus=security::ReadStatus(unicodeDir);
+   Check(b.ok && !unicodeStatus.aclProtected,L"Unicode ACL OFF restores inheritance");
+   a=security::Apply(unicodeDir,security::Action::DenyDeleteOn);
+   unicodeStatus=security::ReadStatus(unicodeDir);
+   Check(a.ok && unicodeStatus.denyDelete && TargetAclDeniesDelete(unicodeDir),
+         L"Unicode delete-deny ACE actually denies DELETE");
+   b=security::Apply(unicodeDir,security::Action::DenyDeleteOff);
+   Check(b.ok && !security::ReadStatus(unicodeDir).denyDelete,
+         L"Unicode delete-deny OFF preserves other ACL state");
+   a=security::Apply(unicodeDir,security::Action::SystemOn);
+   b=security::Apply(unicodeDir,security::Action::HiddenOn);
+   unicodeStatus=security::ReadStatus(unicodeDir);
+   Check(a.ok && b.ok && unicodeStatus.system && unicodeStatus.hidden,
+         L"Unicode path supports both attribute switches");
+   a=security::Apply(unicodeDir,security::Action::SystemOff);
+   b=security::Apply(unicodeDir,security::Action::HiddenOff);
+   Check(a.ok && b.ok && !security::ReadStatus(unicodeDir).system &&
+         !security::ReadStatus(unicodeDir).hidden,
+         L"Unicode path attribute switches can be reset");
+   a=security::Apply(unicodeDir,security::Action::FullLock);
+   unicodeStatus=security::ReadStatus(unicodeDir);
+   Check(a.ok && unicodeStatus.aclProtected &&
+         GetFileAttributesW(unicodeFile.c_str())!=INVALID_FILE_ATTRIBUTES,
+         L"Unicode full lock preserves nested CJK file");
+   b=security::Apply(unicodeDir,security::Action::FullUnlock);
+   unicodeStatus=security::ReadStatus(unicodeDir);
+   Check(b.ok && !unicodeStatus.aclProtected,
+         L"Unicode full unlock resets directory via icacls.exe");
+   Check(DeleteFileW(unicodeFile.c_str())!=0 &&
+         RemoveDirectoryW(unicodeChild.c_str())!=0 &&
+         RemoveDirectoryW(unicodeDir.c_str())!=0,
+         L"Clean up Unicode NTFS test tree");
+ 
    a=security::Apply(root,security::Action::QuickLock);
    s=security::ReadStatus(root);
    Check(a.ok && s.aclProtected && s.denyDelete && s.system,L"Quick lock: ACL protected, deny delete, +S");
