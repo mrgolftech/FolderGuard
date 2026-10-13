@@ -134,7 +134,10 @@ Result LockRoot(const std::wstring& path, bool inheritedAllow, bool withDeny=tru
         DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, acl, nullptr);
     if (acl) LocalFree(acl);
     if (e != ERROR_SUCCESS) return {false, L"写入目标 ACL 失败：" + ErrorText(e)};
-    return {true, L"顶层 ACL 已设置。"};
+    const auto verified = ReadStatus(path);
+    if (!verified.error.empty() || !verified.aclProtected)
+        return {false, L"ACL 写入后核验失败（保护状态或实际访问规则不符合预期）：" + verified.error};
+    return {true, L"顶层 ACL 已设置并校验。"};
 }
 Result RunIcacls(const std::wstring& path,const std::wstring& args);
 Result ToggleDeleteAce(const std::wstring& p,bool enable);
@@ -174,6 +177,36 @@ bool IsDeleteAce(const void* ace,PSID auth,bool exact) {
     return exact?(denied->Mask==rights && (head->AceFlags &
         (CONTAINER_INHERIT_ACE|OBJECT_INHERIT_ACE))==0):
         (denied->Mask & rights)==rights;
+}
+
+// An inheritance-protection bit alone does not mean a folder is locked.
+// Treat ACL protection as enabled only when the *effective root DACL* matches
+// FolderGuard's Administrators/SYSTEM-only allow policy. Other protected DACLs
+// may still grant ordinary users access, so displaying them as locked is unsafe.
+bool IsFolderGuardRestrictedAcl(PACL acl) {
+    if (!acl) return false;  // A NULL DACL grants unrestricted access.
+    std::vector<BYTE> admins, system;
+    if (!MakeSid(WinBuiltinAdministratorsSid, admins) ||
+        !MakeSid(WinLocalSystemSid, system)) return false;
+    bool hasAdmins = false, hasSystem = false;
+    for (DWORD i = 0; i < acl->AceCount; ++i) {
+        void* ace = nullptr;
+        if (!GetAce(acl, i, &ace)) return false;
+        const auto* header = static_cast<const ACE_HEADER*>(ace);
+        if (header->AceFlags & INHERIT_ONLY_ACE) continue;
+        if (header->AceType == ACCESS_DENIED_ACE_TYPE) continue;
+        if (header->AceType != ACCESS_ALLOWED_ACE_TYPE ||
+            (header->AceFlags & INHERITED_ACE)) return false;
+        const auto* allowed = static_cast<const ACCESS_ALLOWED_ACE*>(ace);
+        const DWORD mask = allowed->Mask;
+        if (!(mask & GENERIC_ALL) &&
+            (mask & FILE_ALL_ACCESS) != FILE_ALL_ACCESS) return false;
+        PSID sid = const_cast<PSID>(static_cast<const void*>(&allowed->SidStart));
+        if (EqualSid(sid, admins.data())) hasAdmins = true;
+        else if (EqualSid(sid, system.data())) hasSystem = true;
+        else return false;
+    }
+    return hasAdmins && hasSystem;
 }
 
 Result ToggleDeleteAce(const std::wstring& p,bool enable) {
@@ -303,7 +336,7 @@ Status ReadStatus(const std::wstring& input) {
     SECURITY_DESCRIPTOR_CONTROL control = {};
     DWORD revision = 0;
     if (GetSecurityDescriptorControl(descriptor, &control, &revision))
-        s.aclProtected = (control & SE_DACL_PROTECTED) != 0;
+        s.aclProtected = (control & SE_DACL_PROTECTED) != 0 && IsFolderGuardRestrictedAcl(acl);
     std::vector<BYTE> auth;
     if (MakeSid(WinAuthenticatedUserSid, auth) && acl) {
         for (DWORD i = 0; i < acl->AceCount; ++i) {
