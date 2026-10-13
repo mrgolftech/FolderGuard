@@ -32,11 +32,11 @@ jobs:
         shell: pwsh
         run: |
           $binary = Get-Item 'build/Release/FolderGuard.exe'
-          $version = $binary.VersionInfo.ProductVersion
+          $version = $binary.VersionInfo.FileVersion
           if ($version -notin @('0.0.2','0.0.2.0')) {
-            throw "Expected version 0.0.2, got ProductVersion=$version"
+            throw "Expected version 0.0.2, got FileVersion=$version"
           }
-          Write-Host "Validated FolderGuard GUI ProductVersion=$version"
+          Write-Host "Validated FolderGuard GUI FileVersion=$version"
       - name: Test actual NTFS ACL and attributes
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Test four GUI switches on disposable NTFS directory
