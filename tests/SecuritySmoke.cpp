@@ -219,6 +219,9 @@ int wmain(){
    unicodeStatus=security::ReadStatus(unicodeDir);
    Check(b.ok && !unicodeStatus.aclProtected,
          L"Unicode full unlock resets directory via icacls.exe");
+   const DWORD unicodeAttributes=GetFileAttributesW(unicodeDir.c_str());
+   if(unicodeAttributes!=INVALID_FILE_ATTRIBUTES)
+       SetFileAttributesW(unicodeDir.c_str(),unicodeAttributes&~(FILE_ATTRIBUTE_SYSTEM|FILE_ATTRIBUTE_HIDDEN));
    Check(DeleteFileW(unicodeFile.c_str())!=0 &&
          RemoveDirectoryW(unicodeChild.c_str())!=0 &&
          RemoveDirectoryW(unicodeDir.c_str())!=0,
